@@ -199,10 +199,10 @@ def render_grouped_table(filas: list[dict]) -> str:
                 celdas.append(f'<td rowspan="{rowspan_restante}">{render_pill(centro_nombre, color_centro)}</td>')
 
             celdas.append(f'<td>{formato_valor(fila["IdCentro"])}</td>')
-            celdas.append(f"<td>{_formato_numero(fila['Inventario'])}</td>")
-            celdas.append(f"<td>{_formato_numero(fila['Necesidad'])}</td>")
-            celdas.append(f"<td>{_formato_numero(fila['EntregaPendiente'])}</td>")
-            celdas.append(f'<td>{_formato_fecha(fila["FechaEntrega"])}</td>')
+            celdas.append(f"<td style='text-align: right;'>{_formato_numero(fila['Inventario'])}</td>")
+            celdas.append(f"<td style='text-align: right;'>{_formato_numero(fila['Necesidad'])}</td>")
+            celdas.append(f"<td style='text-align: right;'>{_formato_numero(fila['EntregaPendiente'])}</td>")
+            celdas.append(f'<td style="text-align: center;">{_formato_fecha(fila["FechaEntrega"])}</td>')
 
             rowspan_restante -= 1
 
@@ -292,7 +292,7 @@ def render_traslados_table(filas: list[dict]) -> str:
 
             clasificacion = formato_valor(fila["Clasificacion"])
             color = CLASIFICACION_COLORES.get(clasificacion, "#546E7A")
-            celdas.append(f"<td>{_formato_numero(fila['Cantidad'])}</td>")
+            celdas.append(f"<td style='text-align: right;'>{_formato_numero(fila['Cantidad'])}</td>")
             celdas.append(f'<td>{formato_valor(fila["Destino"])}</td>')
             celdas.append(f"<td>{render_pill(clasificacion, color)}</td>")
 

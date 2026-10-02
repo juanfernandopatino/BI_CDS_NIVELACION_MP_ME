@@ -20,7 +20,7 @@ import snowflake.connector
 import streamlit as st
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=r"C:\Users\fernando.patino\OneDrive - SUPER DE ALIMENTOS S A\Documentos\Proyectos\Snowflake\.env")
+load_dotenv()
 
 
 def conectar_snowflake():

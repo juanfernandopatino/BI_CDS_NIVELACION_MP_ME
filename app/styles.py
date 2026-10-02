@@ -52,62 +52,50 @@ ESTADO_COLORES = {
 
 GLOBAL_CSS = f"""
 <style>
-    .stApp {{
-        background-color: {COLOR_FONDO_PAGINA};
+    :root {{
+      --azul:#0033a0; --azul-claro:#0093d9; --amarillo:#ffdb00; --verde:#76b62a;
+      --naranja:#ea6608; --magenta:#a51680; --ambar:#f5a404; --tinta:#1c2b4a;
     }}
+    /* Fondo general */
+    .stApp {{ background: linear-gradient(180deg, #f6f9fe 0%, #eef3fb 100%); }}
+    .block-container {{ padding-top: 1.6rem; max-width: 1400px; padding-bottom: 2rem; }}
 
     #MainMenu {{visibility: hidden;}}
     footer {{visibility: hidden;}}
 
-    .block-container {{
-        padding-top: 1.2rem;
-        padding-bottom: 2rem;
-        max-width: 1400px;
+    /* ---------- Hero header ---------- */
+    .hero {{
+      background: linear-gradient(110deg, #0033a0 0%, #0093d9 100%);
+      border-radius: 18px; padding: 22px 28px; margin: 0 0 14px;
+      box-shadow: 0 10px 26px rgba(0,51,160,0.28); text-align: center; position: relative;
+      overflow: hidden;
+    }}
+    .hero::after {{
+      content:""; position:absolute; right:-40px; top:-40px; width:160px; height:160px;
+      background: radial-gradient(circle, rgba(255,219,0,0.35) 0%, rgba(255,219,0,0) 70%);
+    }}
+    .hero h1 {{
+      color:#fff; font-size:1.9rem; font-weight:800; margin:0; letter-spacing:.3px;
+      text-shadow:0 2px 10px rgba(0,0,0,.18);
+    }}
+    .hero .bar {{ height:4px; width:120px; margin:10px auto 0;
+      background: linear-gradient(90deg,#ffdb00,#f5a404,#ea6608); border-radius:4px; }}
+    .hero .updated {{
+      position:relative; display:inline-flex; align-items:center; gap:7px;
+      margin:12px auto 0; padding:5px 16px; border-radius:999px;
+      background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.28);
+      color:#eef6ff; font-size:0.86rem; font-weight:600; backdrop-filter:blur(2px);
+    }}
+    .hero .updated::before {{
+      content:""; width:8px; height:8px; border-radius:50%; background:#76b62a;
+      box-shadow:0 0 0 3px rgba(118,182,42,0.35);
+    }}
+    .hero .updated b {{ color:#fff; font-weight:800; }}
+    /* Ocultar el menú superior nativo de Streamlit */
+    header[data-testid="stHeader"] {{
+      display: none !important;
     }}
 
-    /* ---------- Header ---------- */
-    .app-header {{
-        background: linear-gradient(120deg, #012C5C 0%, #0B4DA2 55%, #1E8FD6 100%);
-        border-radius: 14px;
-        padding: 28px 32px 20px 32px;
-        margin-bottom: 22px;
-        position: relative;
-        overflow: hidden;
-        box-shadow: 0 4px 14px rgba(1, 48, 102, 0.25);
-    }}
-    .app-header h1 {{
-        color: #FFFFFF;
-        font-size: 1.7rem;
-        font-weight: 700;
-        margin: 0;
-        text-align: center;
-    }}
-    .app-header .header-rule {{
-        width: 90px;
-        height: 4px;
-        margin: 10px auto 14px auto;
-        border-radius: 4px;
-        background: linear-gradient(90deg, #F5A623, #E6007E, #1E8FD6);
-    }}
-    .app-header .header-badge {{
-        display: block;
-        width: fit-content;
-        margin: 0 auto;
-        background: rgba(255, 255, 255, 0.14);
-        border: 1px solid rgba(255, 255, 255, 0.35);
-        color: #FFFFFF;
-        font-size: 0.8rem;
-        padding: 5px 14px;
-        border-radius: 20px;
-    }}
-    .app-header .status-dot {{
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: #3DDC84;
-        margin-right: 6px;
-    }}
 
     /* ---------- Tarjetas blancas ---------- */
     .card {{

@@ -11,6 +11,7 @@ espacios ("CPS1 Inv", "Entrega Pendiente NS0", ...).
 """
 
 import pandas as pd
+import streamlit as st
 
 CENTROS_MP = ["CPS1", "CPS2", "CPT2", "CPB2", "CPB1"]
 CENTROS_ME = ["CPS9", "CPT9", "CPB9", "CPE9", "CPK9", "CPO9"]
@@ -115,6 +116,7 @@ def calcular_traslados_semana(estado: dict[str, dict], centros_ordenados: list[s
     return traslados
 
 
+@st.cache_data(show_spinner=False)
 def simular_semanas(df_ancho: pd.DataFrame, grupo: str, modo: str) -> dict:
     """
     Devuelve, por material, el estado (inv_total, inv_libre_calidad,
@@ -178,6 +180,7 @@ def simular_semanas(df_ancho: pd.DataFrame, grupo: str, modo: str) -> dict:
     return resultado
 
 
+@st.cache_data(show_spinner=False)
 def construir_filas_inventario_necesidad(
     df_ancho: pd.DataFrame, grupo: str, semana: int, orden: str,
     centro_filtro: str | None = None, modo: str = "actual",
@@ -237,6 +240,7 @@ def construir_filas_inventario_necesidad(
     return filas
 
 
+@st.cache_data(show_spinner=False)
 def construir_filas_traslados(
     df_ancho: pd.DataFrame, grupo: str, semana: int, modo: str,
     origen_filtro: str | None = None, destino_filtro: str | None = None,

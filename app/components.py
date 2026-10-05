@@ -233,8 +233,8 @@ def render_combinado_table(filas: list[dict]) -> str:
     Construida con listas + "".join(...), nunca iterrows + concatenacion.
     """
     columnas = [
-        "ID", "Material", "UM", "IdCentro", "Inventario", "Necesidad", "Bloqueado",
-        "Entrega Pendiente", "Fecha Entrega", "Centro a Nivelar", "Cantidad a Nivelar", "Clasificacion",
+        "ID", "Material", "UM", "IdCentro", "Inventario", "Necesidad",
+        "Entrega Pendiente", "Fecha Entrega", "Centro a Nivelar", "Cantidad a Nivelar", "Clasificacion", "Bloqueado",
     ]
     header_html = "".join(f"<th>{c}</th>" for c in columnas)
 
@@ -262,7 +262,8 @@ def render_combinado_table(filas: list[dict]) -> str:
                 celdas.append(f'<td rowspan="{total_filas_material}" style="text-align:left">{formato_valor(primera["Material"])}</td>')
                 celdas.append(f'<td rowspan="{total_filas_material}">{formato_valor(primera["UnidadMedida"])}</td>')
 
-            if rowspan_idcentro_restante == 0:
+            inicio_centro = rowspan_idcentro_restante == 0
+            if inicio_centro:
                 rowspan_idcentro_restante = 1
                 while (
                     i + rowspan_idcentro_restante < total_filas_material
@@ -272,9 +273,7 @@ def render_combinado_table(filas: list[dict]) -> str:
                 celdas.append(f'<td rowspan="{rowspan_idcentro_restante}">{formato_valor(fila["IdCentro"])}</td>')
                 celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: right;'>{_formato_numero(fila['Inventario'])}</td>")
                 celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: right;'>{_formato_numero(fila['Necesidad'])}</td>")
-                bloqueado = fila.get("Bloqueado", 0) or 0
-                celda_bloqueado = render_pill(_formato_numero(bloqueado), "#F9A825") if bloqueado else ""
-                celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: center;'>{celda_bloqueado}</td>")
+            rowspan_centro_actual = rowspan_idcentro_restante
 
             if i == 0:
                 celdas.append(f"<td rowspan=\"{total_filas_material}\" style='text-align: right;'>{_formato_numero(primera['EntregaPendiente'])}</td>")
@@ -289,6 +288,11 @@ def render_combinado_table(filas: list[dict]) -> str:
                 celdas.append(f"<td>{render_pill(clasificacion_nivelar, color)}</td>")
             else:
                 celdas.append("<td></td><td></td><td></td>")
+
+            if inicio_centro:
+                bloqueado = fila.get("Bloqueado", 0) or 0
+                celda_bloqueado = render_pill(_formato_numero(bloqueado), "#F9A825") if bloqueado else ""
+                celdas.append(f"<td rowspan=\"{rowspan_centro_actual}\" style='text-align: center;'>{celda_bloqueado}</td>")
 
             rowspan_idcentro_restante -= 1
 

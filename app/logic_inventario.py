@@ -256,11 +256,13 @@ def construir_filas_combinadas(
     Combina Inventario y Necesidad con las Nivelaciones/Ventas Internas
     sugeridas en una sola vista: cada fila de `construir_filas_inventario_necesidad`
     (un IdCentro real) se expande en una sub-fila por cada traslado donde ese
-    IdCentro participa (ya sea como origen o como destino), agregando
-    CentroNivelar/CantidadNivelar/ClasificacionNivelar. Si no participa en
-    ningun traslado, queda una sola fila con esos 3 campos en None (a menos
-    que haya un filtro de centro_destino/clasificacion activo, en cuyo caso
-    esa fila sin coincidencia se oculta).
+    IdCentro participa como ORIGEN (el que despacha), agregando
+    CentroNivelar/CantidadNivelar/ClasificacionNivelar. Un IdCentro que solo
+    participa como destino (recibe) no muestra nada en esas 3 columnas, ya
+    que el traslado ya se ve en la fila de su origen. Si no participa como
+    origen en ningun traslado, queda una sola fila con esos 3 campos en None
+    (a menos que haya un filtro de centro_destino/clasificacion activo, en
+    cuyo caso esa fila sin coincidencia se oculta).
 
     grupo: "MP", "ME" o "AMBOS" (combina ambos grupos en una sola lista).
     idcentro_filtro: tupla de codigos reales de IdCentro a incluir (None = todos).
@@ -286,11 +288,6 @@ def construir_filas_combinadas(
     for t in filas_tras:
         nivelaciones.setdefault((t["IdMaterial"], t["Origen"]), []).append({
             "CentroNivelar": t["Destino"],
-            "CantidadNivelar": t["Cantidad"],
-            "ClasificacionNivelar": t["Clasificacion"],
-        })
-        nivelaciones.setdefault((t["IdMaterial"], t["Destino"]), []).append({
-            "CentroNivelar": t["Origen"],
             "CantidadNivelar": t["Cantidad"],
             "ClasificacionNivelar": t["Clasificacion"],
         })

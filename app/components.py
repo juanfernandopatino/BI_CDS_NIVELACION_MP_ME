@@ -315,6 +315,107 @@ def render_traslados_table(filas: list[dict]) -> str:
     """
 
 
+def render_combinado_table(filas: list[dict]) -> str:
+    """
+    Tabla HTML con 3 niveles de agrupacion visual, `filas` debe venir
+    ordenada por material, por centro y por IdCentro (una fila por cada
+    traslado en el que participa un IdCentro, o una sola si no participa
+    en ninguno):
+      - Material: ID/Material/UM con rowspan sobre TODO el material.
+      - Centro: la pastilla se agrupa (rowspan) cuando varios IdCentro
+        caen en el mismo nombre de centro.
+      - IdCentro: Inventario/Necesidad/Entrega Pendiente/Fecha Entrega se
+        agrupan (rowspan) sobre las sub-filas de nivelacion de ESE IdCentro
+        (puede tener 0, 1 o varios traslados).
+      - Centro a Nivelar/Cantidad a Nivelar/Clasificacion: una fila por
+        cada traslado real; vacias si el IdCentro no tiene ninguno.
+    Construida con listas + "".join(...), nunca iterrows + concatenacion.
+    """
+    columnas = [
+        "ID", "Material", "UM", "Centro", "IdCentro", "Inventario", "Necesidad",
+        "Entrega Pendiente", "Fecha Entrega", "Centro a Nivelar", "Cantidad a Nivelar", "Clasificacion",
+    ]
+    header_html = "".join(f"<th>{c}</th>" for c in columnas)
+
+    materiales: dict[str, list[dict]] = {}
+    orden_materiales: list[str] = []
+    for fila in filas:
+        id_mat = fila["IdMaterial"]
+        if id_mat not in materiales:
+            materiales[id_mat] = []
+            orden_materiales.append(id_mat)
+        materiales[id_mat].append(fila)
+
+    partes = []
+    for id_mat in orden_materiales:
+        filas_material = materiales[id_mat]
+        primera = filas_material[0]
+        total_filas_material = len(filas_material)
+        borde_grupo = "border-bottom:2px solid #013066;"
+
+        rowspan_centro_restante = 0
+        rowspan_idcentro_restante = 0
+        for i, fila in enumerate(filas_material):
+            celdas = []
+            if i == 0:
+                celdas.append(f'<td rowspan="{total_filas_material}">{formato_valor(primera["IdMaterial"])}</td>')
+                celdas.append(f'<td rowspan="{total_filas_material}" style="text-align:left">{formato_valor(primera["Material"])}</td>')
+                celdas.append(f'<td rowspan="{total_filas_material}">{formato_valor(primera["UnidadMedida"])}</td>')
+
+            if rowspan_centro_restante == 0:
+                rowspan_centro_restante = 1
+                while (
+                    i + rowspan_centro_restante < total_filas_material
+                    and filas_material[i + rowspan_centro_restante]["Centro"] == fila["Centro"]
+                ):
+                    rowspan_centro_restante += 1
+                centro_nombre = formato_valor(fila["Centro"])
+                color_centro = CENTRO_COLORES.get(centro_nombre, "#546E7A")
+                celdas.append(f'<td rowspan="{rowspan_centro_restante}">{render_pill(centro_nombre, color_centro)}</td>')
+
+            if rowspan_idcentro_restante == 0:
+                rowspan_idcentro_restante = 1
+                while (
+                    i + rowspan_idcentro_restante < total_filas_material
+                    and filas_material[i + rowspan_idcentro_restante]["IdCentro"] == fila["IdCentro"]
+                ):
+                    rowspan_idcentro_restante += 1
+                celdas.append(f'<td rowspan="{rowspan_idcentro_restante}">{formato_valor(fila["IdCentro"])}</td>')
+                celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: right;'>{_formato_numero(fila['Inventario'])}</td>")
+                celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: right;'>{_formato_numero(fila['Necesidad'])}</td>")
+                celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: right;'>{_formato_numero(fila['EntregaPendiente'])}</td>")
+                celdas.append(f'<td rowspan="{rowspan_idcentro_restante}" style="text-align: center;">{_formato_fecha(fila["FechaEntrega"])}</td>')
+
+            centro_nivelar = formato_valor(fila.get("CentroNivelar"))
+            if centro_nivelar != "":
+                clasificacion_nivelar = formato_valor(fila.get("ClasificacionNivelar"))
+                color = CLASIFICACION_COLORES.get(clasificacion_nivelar, "#546E7A")
+                celdas.append(f"<td>{centro_nivelar}</td>")
+                celdas.append(f"<td style='text-align: right;'>{_formato_numero(fila.get('CantidadNivelar'))}</td>")
+                celdas.append(f"<td>{render_pill(clasificacion_nivelar, color)}</td>")
+            else:
+                celdas.append("<td></td><td></td><td></td>")
+
+            rowspan_centro_restante -= 1
+            rowspan_idcentro_restante -= 1
+
+            estilo_borde = f' style="{borde_grupo}"' if i == total_filas_material - 1 else ""
+            partes.append(f"<tr{estilo_borde}>{''.join(celdas)}</tr>")
+
+    body_html = "".join(partes)
+
+    return f"""
+    <div class="detail-table-outer">
+        <div class="detail-table-wrap">
+            <table class="detail-table">
+                <thead><tr>{header_html}</tr></thead>
+                <tbody>{body_html}</tbody>
+            </table>
+        </div>
+    </div>
+    """
+
+
 def render_section_title(texto: str) -> str:
     return f'<div class="section-title">{texto}<div class="rule"></div></div>'
 

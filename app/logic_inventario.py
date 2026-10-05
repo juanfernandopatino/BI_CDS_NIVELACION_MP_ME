@@ -278,3 +278,65 @@ def construir_filas_traslados(
 
     filas.sort(key=lambda f: (f["IdMaterial"], f["Origen"]))
     return filas
+
+
+def construir_filas_combinadas(
+    df_ancho: pd.DataFrame, grupo: str, semana: int, orden: str, modo: str,
+    centro_filtro: str | None = None, idcentro_filtro: str | None = None,
+    centro_destino_filtro: str | None = None, clasificacion_filtro: str | None = None,
+) -> list[dict]:
+    """
+    Combina Inventario y Necesidad con las Nivelaciones/Ventas Internas
+    sugeridas en una sola vista: cada fila de `construir_filas_inventario_necesidad`
+    (un IdCentro real) se expande en una sub-fila por cada traslado donde ese
+    IdCentro participa (ya sea como origen o como destino), agregando
+    CentroNivelar/CantidadNivelar/ClasificacionNivelar. Si no participa en
+    ningun traslado, queda una sola fila con esos 3 campos en None (a menos
+    que haya un filtro de centro_destino/clasificacion activo, en cuyo caso
+    esa fila sin coincidencia se oculta).
+
+    idcentro_filtro: filtra para dejar solo las filas de ese IdCentro real
+    (distinto del centro_filtro, que filtra por nombre de Centro clasificado).
+    centro_destino_filtro: filtra las sub-filas de nivelacion cuyo
+    CentroNivelar sea ese IdCentro.
+    """
+    filas_inv = construir_filas_inventario_necesidad(
+        df_ancho, grupo=grupo, semana=semana, orden=orden, centro_filtro=centro_filtro, modo=modo,
+    )
+    filas_tras = construir_filas_traslados(df_ancho, grupo=grupo, semana=semana, modo=modo)
+
+    nivelaciones: dict[tuple[str, str], list[dict]] = {}
+    for t in filas_tras:
+        nivelaciones.setdefault((t["IdMaterial"], t["Origen"]), []).append({
+            "CentroNivelar": t["Destino"],
+            "CantidadNivelar": t["Cantidad"],
+            "ClasificacionNivelar": t["Clasificacion"],
+        })
+        nivelaciones.setdefault((t["IdMaterial"], t["Destino"]), []).append({
+            "CentroNivelar": t["Origen"],
+            "CantidadNivelar": t["Cantidad"],
+            "ClasificacionNivelar": t["Clasificacion"],
+        })
+
+    hay_filtro_nivelacion = centro_destino_filtro is not None or clasificacion_filtro is not None
+
+    filas = []
+    for fila in filas_inv:
+        if idcentro_filtro is not None and fila["IdCentro"] != idcentro_filtro:
+            continue
+
+        matches = nivelaciones.get((fila["IdMaterial"], fila["IdCentro"]), [])
+        if centro_destino_filtro is not None:
+            matches = [m for m in matches if m["CentroNivelar"] == centro_destino_filtro]
+        if clasificacion_filtro is not None:
+            matches = [m for m in matches if m["ClasificacionNivelar"] == clasificacion_filtro]
+
+        if not matches:
+            if hay_filtro_nivelacion:
+                continue
+            filas.append({**fila, "CentroNivelar": None, "CantidadNivelar": None, "ClasificacionNivelar": None})
+        else:
+            for match in matches:
+                filas.append({**fila, **match})
+
+    return filas

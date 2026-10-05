@@ -49,8 +49,8 @@ QUERY_INVENTARIO_NECESIDAD = """
 -- Centros empaque (material inicia por '14'): CPS9, CPT9, CPB9, CPE9, CPK9, CPO9
 -- Excluye los almacenes: 0003, 0004, 0005, 0006, 0017, 0018, 0038, 0039 (solo aplica a inventario normal, InventarioProduccion es el 85% de esos almacenes)
 -- Semana 0 = semana actual (lunes a domingo), Semana 1 = siguiente semana, Semana 2 = la que sigue.
--- NOTA: La tabla de ordenes de compra pendientes no tiene columna de centro, por lo que la Entrega Pendiente
--- de cada material se repite igual en todas sus filas de centro (no se puede atribuir a un centro especifico).
+-- Entrega Pendiente: ordenes de compra no entregadas totalmente (IndicadorEntregaFinal = FALSE), sumando
+-- todos los almacenes, discriminadas por el centro real (IdCentroFase2) de TDS_VW_CDS_ORDENCOMPRA.
 
 WITH INV_BASE AS (
     SELECT
@@ -98,20 +98,25 @@ MRP_BASE AS (
           )
 ),
 PO_BASE AS (
-    -- Entregas pendientes de ordenes de compra activas (sin desglose de centro en la fuente)
+    -- Entregas pendientes de ordenes de compra (no entregadas totalmente), sumando todos los almacenes,
+    -- discriminadas por el centro real (IdCentroFase2)
     SELECT
-        PEN_IDMATERIAL as IdMaterial,
-        -PEN_CANTIDADPENDIENTE as Cantidad,
-        PEN_FECHAENTREGASOLICITADA as FechaEntrega,
-        DATEDIFF('WEEK', DATE_TRUNC('WEEK', CURRENT_DATE()), DATE_TRUNC('WEEK', PEN_FECHAENTREGASOLICITADA)) as Semana
-    FROM DB_EXCELENCIAYEFECTIVIDADORGANIZACIONAL.PUBLIC.EEO_PROVEEDORPENDIENTE
-    WHERE PEN_ESTADOORDEN = 'Pendiente'
-      AND PEN_TIPO_MATERIAL IN ('ZMPR','ZEMP')
-      AND (PEN_IDMATERIAL LIKE '13%' OR PEN_IDMATERIAL LIKE '14%')
+        "IdMaterial"           as IdMaterial,
+        "IdCentroFase2"        as Centro,
+        ("CantidadOrdenCompra" - "CantidadEntregada") as Cantidad,
+        "FechaEntregaPosicion" as FechaEntrega,
+        DATEDIFF('WEEK', DATE_TRUNC('WEEK', CURRENT_DATE()), DATE_TRUNC('WEEK', "FechaEntregaPosicion")) as Semana
+    FROM DB_TABLEAUDATASOURCE.CADENASUMINISTRO.TDS_VW_CDS_ORDENCOMPRA
+    WHERE "IndicadorEntregaFinal" = FALSE
+      AND "TipoMaterial" IN ('ZMPR','ZEMP')
+      AND (
+            ("IdMaterial" LIKE '13%' AND "IdCentroFase2" IN ('CPS1','CPS2','CPT2','CPB2','CPB1'))
+         OR ("IdMaterial" LIKE '14%' AND "IdCentroFase2" IN ('CPS9','CPT9','CPB9','CPE9','CPK9','CPO9'))
+          )
 ),
 PO_AGG AS (
     SELECT
-        IdMaterial,
+        IdMaterial, Centro,
         SUM(CASE WHEN Semana = 0 THEN Cantidad ELSE 0 END) as EntregaPendienteS0,
         MIN(CASE WHEN Semana = 0 THEN FechaEntrega END)    as FechaEntregaProgramadaS0,
         SUM(CASE WHEN Semana = 1 THEN Cantidad ELSE 0 END) as EntregaPendienteS1,
@@ -120,7 +125,7 @@ PO_AGG AS (
         MIN(CASE WHEN Semana = 2 THEN FechaEntrega END)    as FechaEntregaProgramadaS2
     FROM PO_BASE
     WHERE Semana IN (0, 1, 2)
-    GROUP BY IdMaterial
+    GROUP BY IdMaterial, Centro
 ),
 UNIDAD_BASE AS (
     SELECT IdMaterial, Unidad FROM INV_BASE WHERE Unidad IS NOT NULL
@@ -200,7 +205,7 @@ FROM MATERIAL_CENTRO MC
 LEFT JOIN INV_AGG I  ON MC.IdMaterial = I.IdMaterial  AND MC.Centro = I.Centro
 LEFT JOIN PROD_AGG P ON MC.IdMaterial = P.IdMaterial  AND MC.Centro = P.Centro
 LEFT JOIN MRP_AGG R  ON MC.IdMaterial = R.IdMaterial  AND MC.Centro = R.Centro
-LEFT JOIN PO_AGG PO  ON MC.IdMaterial = PO.IdMaterial
+LEFT JOIN PO_AGG PO  ON MC.IdMaterial = PO.IdMaterial AND MC.Centro = PO.Centro
 LEFT JOIN UNIDAD_AGG U ON MC.IdMaterial = U.IdMaterial
 LEFT JOIN DB_TABLEAUDATASOURCE.CADENASUMINISTRO.TDS_VW_CDS_MAESTRAMATERIALES MM ON MC.IdMaterial = MM."IdMaterial"
 WHERE COALESCE(I.InventarioLibreUtilizacion, 0) != 0

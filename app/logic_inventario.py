@@ -79,7 +79,9 @@ def simular_semanas(df_largo: pd.DataFrame, grupo: str, modo: str) -> dict:
     df_largo viene en formato largo (una fila por Material+Centro, ver
     QUERY_INVENTARIO_NECESIDAD en data.py): IDMATERIAL, MATERIAL, IDCENTRO,
     UNIDADMEDIDA, INVENTARIOLIBREUTILIZACION, INVENTARIOCALIDAD,
-    CANTIDADBLOQUEADO, INVENTARIOPRODUCCION, NECESIDADSEMANA0/1/2.
+    CANTIDADBLOQUEADO, INVENTARIOPRODUCCION, NECESIDADSEMANA0/1/2,
+    "Entrega Pendiente S0/1/2", "Fecha Entrega Programada S0/1/2" (ya
+    discriminadas por centro).
 
     inv_total(semana0) = Libre + Calidad + Produccion.
     inv_libre_calidad(semana0) = Libre + Calidad (nunca incluye Produccion,
@@ -88,16 +90,24 @@ def simular_semanas(df_largo: pd.DataFrame, grupo: str, modo: str) -> dict:
     en inv_total/inv_libre_calidad ni en la cascada o los traslados.
 
     modo="actual": cascada independiente por semana (igual que hoy en el
-    Cuadro 1), sin corregir ningun deficit.
-    modo="simulado": aplica, al final de cada semana, los traslados que
-    sugeriria calcular_traslados_semana para esa semana (resta al origen,
-    suma al destino, tanto en inv_total como en inv_libre_calidad) antes
-    de pasar a la semana siguiente.
+    Cuadro 1), sin corregir ningun deficit ni sumar entregas pendientes.
+    modo="simulado":
+    - Antes de calcular los traslados de la semana 0, suma la Entrega
+      Pendiente S0 de cada centro a su inv_total/inv_libre_calidad (ya que
+      ahora viene discriminada por centro real): esas ordenes llegan esta
+      semana, asi que un centro que las recibe ya cuenta con ese inventario
+      para decidir si necesita o puede dar un traslado. Las semanas 1 y 2
+      no suman entrega pendiente (solo aplica a la semana actual).
+    - Al final de cada semana, aplica los traslados que sugeriria
+      calcular_traslados_semana para esa semana (resta al origen, suma al
+      destino, tanto en inv_total como en inv_libre_calidad) antes de pasar
+      a la semana siguiente.
 
     Estructura del resultado:
         {IdMaterial: {"Material":, "UnidadMedida":,
                       "estado": {IdCentro: {0: {...}, 1: {...}, 2: {...}}},
-                      "bloqueado": {IdCentro: cantidad}}}
+                      "bloqueado": {IdCentro: cantidad},
+                      "entrega_pendiente": {IdCentro: {0: {"cantidad":, "fecha":}, 1: {...}, 2: {...}}}}}
     """
     centros = CENTROS_MP if grupo == "MP" else CENTROS_ME
     prefijo = "13" if grupo == "MP" else "14"
@@ -108,6 +118,7 @@ def simular_semanas(df_largo: pd.DataFrame, grupo: str, modo: str) -> dict:
         filas_centro = {fila["IDCENTRO"]: fila for _, fila in filas_material.iterrows()}
         estado_centro: dict[str, dict[int, dict]] = {c: {} for c in centros}
         bloqueado_centro: dict[str, float] = {}
+        entrega_centro: dict[str, dict[int, dict]] = {c: {} for c in centros}
 
         for centro in centros:
             fila = filas_centro.get(centro)
@@ -124,6 +135,18 @@ def simular_semanas(df_largo: pd.DataFrame, grupo: str, modo: str) -> dict:
             }
             estado_centro[centro][1] = {"necesidad": (fila.get("NECESIDADSEMANA1", 0) or 0) if fila is not None else 0}
             estado_centro[centro][2] = {"necesidad": (fila.get("NECESIDADSEMANA2", 0) or 0) if fila is not None else 0}
+
+            for s in (0, 1, 2):
+                entrega_centro[centro][s] = {
+                    "cantidad": (fila.get(f"Entrega Pendiente S{s}", 0) or 0) if fila is not None else 0,
+                    "fecha": (fila.get(f"Fecha Entrega Programada S{s}")) if fila is not None else None,
+                }
+
+        if modo == "simulado":
+            for centro in centros:
+                cantidad_s0 = entrega_centro[centro][0]["cantidad"]
+                estado_centro[centro][0]["inv_total"] += cantidad_s0
+                estado_centro[centro][0]["inv_libre_calidad"] += cantidad_s0
 
         for semana in (0, 1):
             for centro in centros:
@@ -149,6 +172,7 @@ def simular_semanas(df_largo: pd.DataFrame, grupo: str, modo: str) -> dict:
             "UnidadMedida": primera["UNIDADMEDIDA"],
             "estado": estado_centro,
             "bloqueado": bloqueado_centro,
+            "entrega_pendiente": entrega_centro,
         }
 
     return resultado
@@ -168,17 +192,14 @@ def construir_filas_inventario_necesidad(
     """
     centros = CENTROS_MP if grupo == "MP" else CENTROS_ME
 
-    prefijo = "13" if grupo == "MP" else "14"
-    df_grupo = df_largo[df_largo["IDMATERIAL"].str.startswith(prefijo)]
     estados = simular_semanas(df_largo, grupo, modo)
+    resaltar_entrega = modo == "simulado" and semana == 0
 
     filas = []
     for id_mat, info in estados.items():
-        primera = df_grupo[df_grupo["IDMATERIAL"] == id_mat].iloc[0]
-        entrega_pendiente = primera.get(f"Entrega Pendiente S{semana}", 0) or 0
-        fecha_entrega = primera.get(f"Fecha Entrega Programada S{semana}")
         estado_centro = info["estado"]
         bloqueado_centro = info["bloqueado"]
+        entrega_centro = info["entrega_pendiente"]
 
         for centro in centros:
             if idcentro_filtro is not None and centro not in idcentro_filtro:
@@ -191,6 +212,8 @@ def construir_filas_inventario_necesidad(
             if inv == 0 and nec == 0:
                 continue
 
+            entrega = entrega_centro[centro][semana]
+
             filas.append({
                 "IdMaterial": id_mat,
                 "Material": info["Material"],
@@ -199,8 +222,9 @@ def construir_filas_inventario_necesidad(
                 "Inventario": inv,
                 "Necesidad": nec,
                 "Bloqueado": bloqueado_centro.get(centro, 0),
-                "EntregaPendiente": entrega_pendiente,
-                "FechaEntrega": fecha_entrega,
+                "EntregaPendiente": entrega["cantidad"],
+                "FechaEntrega": entrega["fecha"],
+                "ResaltarEntrega": resaltar_entrega,
             })
 
     filas.sort(key=lambda f: (f["IdMaterial"], centros.index(f["IdCentro"])))

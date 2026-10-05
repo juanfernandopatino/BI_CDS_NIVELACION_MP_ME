@@ -225,11 +225,14 @@ def render_combinado_table(filas: list[dict]) -> str:
     ordenada por material y por IdCentro (una fila por cada traslado en el
     que participa un IdCentro, o una sola si no participa en ninguno):
       - Material: ID/Material/UM con rowspan sobre TODO el material.
-      - IdCentro: Inventario/Necesidad/Entrega Pendiente/Fecha Entrega se
-        agrupan (rowspan) sobre las sub-filas de nivelacion de ESE IdCentro
-        (puede tener 0, 1 o varios traslados).
+      - IdCentro: Inventario/Necesidad/Bloqueado/Entrega Pendiente/Fecha
+        Entrega se agrupan (rowspan) sobre las sub-filas de nivelacion de
+        ESE IdCentro (puede tener 0, 1 o varios traslados). Entrega
+        Pendiente/Fecha Entrega vienen discriminadas por centro.
       - Centro a Nivelar/Cantidad a Nivelar/Clasificacion: una fila por
         cada traslado real; vacias si el IdCentro no tiene ninguno.
+    Si la fila trae "ResaltarEntrega"=True (modo Simulado, semana actual),
+    Entrega Pendiente y Fecha Entrega se muestran en negrilla.
     Construida con listas + "".join(...), nunca iterrows + concatenacion.
     """
     columnas = [
@@ -273,11 +276,11 @@ def render_combinado_table(filas: list[dict]) -> str:
                 celdas.append(f'<td rowspan="{rowspan_idcentro_restante}">{formato_valor(fila["IdCentro"])}</td>')
                 celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: right;'>{_formato_numero(fila['Inventario'])}</td>")
                 celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: right;'>{_formato_numero(fila['Necesidad'])}</td>")
-            rowspan_centro_actual = rowspan_idcentro_restante
 
-            if i == 0:
-                celdas.append(f"<td rowspan=\"{total_filas_material}\" style='text-align: right;'>{_formato_numero(primera['EntregaPendiente'])}</td>")
-                celdas.append(f'<td rowspan="{total_filas_material}" style="text-align: center;">{_formato_fecha(primera["FechaEntrega"])}</td>')
+                estilo_resaltado = "font-weight:700;" if fila.get("ResaltarEntrega") else ""
+                celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: right;{estilo_resaltado}'>{_formato_numero(fila['EntregaPendiente'])}</td>")
+                celdas.append(f'<td rowspan="{rowspan_idcentro_restante}" style="text-align: center;{estilo_resaltado}">{_formato_fecha(fila["FechaEntrega"])}</td>')
+            rowspan_centro_actual = rowspan_idcentro_restante
 
             centro_nivelar = formato_valor(fila.get("CentroNivelar"))
             if centro_nivelar != "":

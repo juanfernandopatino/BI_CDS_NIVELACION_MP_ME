@@ -250,7 +250,7 @@ def construir_filas_traslados(
 def construir_filas_combinadas(
     df_largo: pd.DataFrame, grupo: str, semana: int, modo: str,
     idcentro_filtro: tuple[str, ...] | None = None,
-    centro_destino_filtro: str | None = None, clasificacion_filtro: str | None = None,
+    centro_destino_filtro: tuple[str, ...] | None = None, clasificacion_filtro: str | None = None,
 ) -> list[dict]:
     """
     Combina Inventario y Necesidad con las Nivelaciones/Ventas Internas
@@ -266,8 +266,8 @@ def construir_filas_combinadas(
 
     grupo: "MP", "ME" o "AMBOS" (combina ambos grupos en una sola lista).
     idcentro_filtro: tupla de codigos reales de IdCentro a incluir (None = todos).
-    centro_destino_filtro: filtra las sub-filas de nivelacion cuyo
-    CentroNivelar sea ese IdCentro.
+    centro_destino_filtro: tupla de IdCentro; filtra las sub-filas de
+    nivelacion cuyo CentroNivelar este en esa tupla (None = todos).
     """
     if grupo == "AMBOS":
         return [
@@ -298,7 +298,7 @@ def construir_filas_combinadas(
     for fila in filas_inv:
         matches = nivelaciones.get((fila["IdMaterial"], fila["IdCentro"]), [])
         if centro_destino_filtro is not None:
-            matches = [m for m in matches if m["CentroNivelar"] == centro_destino_filtro]
+            matches = [m for m in matches if m["CentroNivelar"] in centro_destino_filtro]
         if clasificacion_filtro is not None:
             matches = [m for m in matches if m["ClasificacionNivelar"] == clasificacion_filtro]
 

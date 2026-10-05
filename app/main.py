@@ -134,14 +134,30 @@ with col_clasif:
         "clasificacion_filtro", ["Todas", "Nivelacion", "Venta Interna"],
         horizontal=True, label_visibility="collapsed", key="clasificacion_filtro",
     )
+opciones_centro_destino = ["Todos"] + centros_grupo
+
+def _marcar_todos_centro_destino():
+    seleccion_actual = st.session_state.get("centro_destino_ms", [])
+    if "Todos" in seleccion_actual and set(seleccion_actual) != set(opciones_centro_destino):
+        st.session_state["centro_destino_ms"] = list(opciones_centro_destino)
+
+
 with col_destino:
     st.markdown("**Centro Destino**")
-    centro_destino_label = st.selectbox(
-        "centro_destino_filtro", ["Todos"] + centros_grupo, label_visibility="collapsed", key="centro_destino_filtro",
+    if "centro_destino_ms" not in st.session_state or not set(st.session_state["centro_destino_ms"]) <= set(opciones_centro_destino):
+        st.session_state["centro_destino_ms"] = ["Todos"]
+
+    seleccion_centro_destino = st.multiselect(
+        "centro_destino_filtro", opciones_centro_destino,
+        label_visibility="collapsed", key="centro_destino_ms",
+        on_change=_marcar_todos_centro_destino,
     )
 
 clasificacion_filtro = None if clasificacion_label == "Todas" else clasificacion_label
-centro_destino_filtro = None if centro_destino_label == "Todos" else centro_destino_label
+if "Todos" in seleccion_centro_destino:
+    centro_destino_filtro = None
+else:
+    centro_destino_filtro = tuple(seleccion_centro_destino)  # tupla vacia = ningun destino coincide
 
 filas_combinadas = construir_filas_combinadas(
     df_consolidado, grupo=grupo, semana=semana, modo=modo,

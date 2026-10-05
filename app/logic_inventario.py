@@ -16,57 +16,11 @@ import streamlit as st
 CENTROS_MP = ["CPS1", "CPS2", "CPT2", "CPB2", "CPB1"]
 CENTROS_ME = ["CPS9", "CPT9", "CPB9", "CPE9", "CPK9", "CPO9"]
 
-LUGAR_FISICO_POR_LETRA = {
-    "S": "Super",
-    "T": "Trululu",
-    "B": "Bianchi",
-    "E": "Oka Loka",
-    "O": "Oka Loka",
-    "K": "Centro robotizado",
-}
-
-RAZON_SOCIAL_POR_DIGITO = {
-    "1": "Super",
-    "2": "Trululu",
-    "3": "Comercializadora",
-    "9": "Comercializadora",
-}
-
-# Orden fijo en el que deben aparecer los grupos de centro, sin importar
-# si se clasifico por lugar fisico o por razon social.
-ORDEN_CENTROS = ["Super", "Trululu", "Bianchi", "Oka Loka", "Centro robotizado", "Comercializadora"]
-
-
-def clasificar_lugar_fisico(id_centro: str) -> str:
-    letra = id_centro[2].upper()
-    return LUGAR_FISICO_POR_LETRA.get(letra, "Otro")
-
-
-def clasificar_razon_social(id_centro: str) -> str:
-    digito = id_centro[-1]
-    return RAZON_SOCIAL_POR_DIGITO.get(digito, "Otro")
-
 
 def clasificar_traslado(origen: str, destino: str) -> str:
     """Mismo ultimo digito de IdCentro = misma razon social = Nivelacion.
     Digito distinto = razones sociales distintas = Venta Interna."""
     return "Nivelacion" if origen[-1] == destino[-1] else "Venta Interna"
-
-
-def _indice_orden(nombre_centro: str) -> int:
-    try:
-        return ORDEN_CENTROS.index(nombre_centro)
-    except ValueError:
-        return len(ORDEN_CENTROS)
-
-
-def centros_disponibles(grupo: str, orden: str) -> list[str]:
-    """Nombres de centro (ya clasificados) que puede tener este grupo,
-    en el orden fijo Super/Trululu/Bianchi/Oka Loka/Centro robotizado/Comercializadora."""
-    centros = CENTROS_MP if grupo == "MP" else CENTROS_ME
-    clasificar = clasificar_lugar_fisico if orden == "fisico" else clasificar_razon_social
-    nombres = {clasificar(c) for c in centros}
-    return sorted(nombres, key=_indice_orden)
 
 
 def calcular_traslados_semana(estado: dict[str, dict], centros_ordenados: list[str]) -> list[dict]:
@@ -182,24 +136,17 @@ def simular_semanas(df_ancho: pd.DataFrame, grupo: str, modo: str) -> dict:
 
 @st.cache_data(show_spinner=False)
 def construir_filas_inventario_necesidad(
-    df_ancho: pd.DataFrame, grupo: str, semana: int, orden: str,
-    centro_filtro: str | None = None, modo: str = "actual",
+    df_ancho: pd.DataFrame, grupo: str, semana: int,
+    idcentro_filtro: tuple[str, ...] | None = None, modo: str = "actual",
 ) -> list[dict]:
     """
     grupo: "MP" o "ME"
     semana: 0, 1 o 2
-    orden: "fisico" o "razon_social"
-    centro_filtro: si se indica, solo se devuelven filas de ese centro (ya clasificado)
+    idcentro_filtro: si se indica, solo se devuelven filas de esos IdCentro
+        (tupla de codigos reales, ej. ("CPS1", "CPT2")).
     modo: "actual" o "simulado" (ver simular_semanas)
-
-    Cuando dos IdCentro caen en el mismo nombre de centro (ej. CPS1 y CPS2
-    -> "Super"), la pastilla de Centro se agrupa visualmente, pero
-    Inventario/Necesidad/Entrega Pendiente/Fecha Entrega NO se suman: cada
-    IdCentro conserva sus propios valores, en su propia fila.
     """
     centros = CENTROS_MP if grupo == "MP" else CENTROS_ME
-    clasificar = clasificar_lugar_fisico if orden == "fisico" else clasificar_razon_social
-    centros_ordenados = sorted(centros, key=lambda c: _indice_orden(clasificar(c)))
 
     prefijo = "13" if grupo == "MP" else "14"
     df_grupo = df_ancho[df_ancho["IDMATERIAL"].str.startswith(prefijo)]
@@ -212,23 +159,21 @@ def construir_filas_inventario_necesidad(
         fecha_entrega = material.get(f"Fecha Entrega Programada NS{semana}")
         estado_centro = estados[id_mat]["estado"]
 
-        for centro in centros_ordenados:
-            nombre = clasificar(centro)
-            if centro_filtro is not None and nombre != centro_filtro:
+        for centro in centros:
+            if idcentro_filtro is not None and centro not in idcentro_filtro:
                 continue
 
             datos_semana = estado_centro[centro][semana]
             inv = datos_semana["inv_total"]
             nec = datos_semana["necesidad"]
 
-            if inv == 0 and nec == 0 and entrega_pendiente == 0:
+            if inv == 0 and nec == 0:
                 continue
 
             filas.append({
                 "IdMaterial": id_mat,
                 "Material": material["MATERIAL"],
                 "UnidadMedida": material["UNIDADMEDIDA"],
-                "Centro": nombre,
                 "IdCentro": centro,
                 "Inventario": inv,
                 "Necesidad": nec,
@@ -236,7 +181,7 @@ def construir_filas_inventario_necesidad(
                 "FechaEntrega": fecha_entrega,
             })
 
-    filas.sort(key=lambda f: (f["IdMaterial"], _indice_orden(f["Centro"])))
+    filas.sort(key=lambda f: (f["IdMaterial"], centros.index(f["IdCentro"])))
     return filas
 
 
@@ -281,8 +226,8 @@ def construir_filas_traslados(
 
 
 def construir_filas_combinadas(
-    df_ancho: pd.DataFrame, grupo: str, semana: int, orden: str, modo: str,
-    centro_filtro: str | None = None, idcentro_filtro: str | None = None,
+    df_ancho: pd.DataFrame, grupo: str, semana: int, modo: str,
+    idcentro_filtro: tuple[str, ...] | None = None,
     centro_destino_filtro: str | None = None, clasificacion_filtro: str | None = None,
 ) -> list[dict]:
     """
@@ -295,13 +240,23 @@ def construir_filas_combinadas(
     que haya un filtro de centro_destino/clasificacion activo, en cuyo caso
     esa fila sin coincidencia se oculta).
 
-    idcentro_filtro: filtra para dejar solo las filas de ese IdCentro real
-    (distinto del centro_filtro, que filtra por nombre de Centro clasificado).
+    grupo: "MP", "ME" o "AMBOS" (combina ambos grupos en una sola lista).
+    idcentro_filtro: tupla de codigos reales de IdCentro a incluir (None = todos).
     centro_destino_filtro: filtra las sub-filas de nivelacion cuyo
     CentroNivelar sea ese IdCentro.
     """
+    if grupo == "AMBOS":
+        return [
+            *construir_filas_combinadas(
+                df_ancho, "MP", semana, modo, idcentro_filtro, centro_destino_filtro, clasificacion_filtro,
+            ),
+            *construir_filas_combinadas(
+                df_ancho, "ME", semana, modo, idcentro_filtro, centro_destino_filtro, clasificacion_filtro,
+            ),
+        ]
+
     filas_inv = construir_filas_inventario_necesidad(
-        df_ancho, grupo=grupo, semana=semana, orden=orden, centro_filtro=centro_filtro, modo=modo,
+        df_ancho, grupo=grupo, semana=semana, idcentro_filtro=idcentro_filtro, modo=modo,
     )
     filas_tras = construir_filas_traslados(df_ancho, grupo=grupo, semana=semana, modo=modo)
 
@@ -322,9 +277,6 @@ def construir_filas_combinadas(
 
     filas = []
     for fila in filas_inv:
-        if idcentro_filtro is not None and fila["IdCentro"] != idcentro_filtro:
-            continue
-
         matches = nivelaciones.get((fila["IdMaterial"], fila["IdCentro"]), [])
         if centro_destino_filtro is not None:
             matches = [m for m in matches if m["CentroNivelar"] == centro_destino_filtro]

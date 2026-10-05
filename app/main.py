@@ -10,13 +10,11 @@ from styles import GLOBAL_CSS, CLASIFICACION_COLORES
 from components import (
     render_combinado_table,
     render_card,
-    render_pill_filtro_css,
     render_count_badges,
 )
 from data import cargar_inventario_necesidad
 from logic_inventario import (
     construir_filas_combinadas,
-    centros_disponibles,
     CENTROS_MP,
     CENTROS_ME,
 )
@@ -62,68 +60,74 @@ st.markdown(
 with st.spinner("Cargando datos desde Snowflake..."):
     df_consolidado = cargar_inventario_necesidad()
 
-# ================= Filtros generales =================
-col_orden, col_semana, col_grupo, col_modo = st.columns(4)
-with col_orden:
-    st.markdown("**Orden**")
-    orden_label = st.radio(
-        "orden", ["Por lugar físico", "Por razón social"],
-        horizontal=True, label_visibility="collapsed", key="orden",
+# ================= Filtros =================
+
+# --- Grupo (necesario primero para saber que centros ofrecer en IdCentro) ---
+GRUPOS = {"Materia Prima": "MP", "Material de Empaque": "ME", "Ambos": "AMBOS"}
+
+
+def _centros_de_grupo(grupo_valor: str) -> list[str]:
+    if grupo_valor == "MP":
+        return list(CENTROS_MP)
+    if grupo_valor == "ME":
+        return list(CENTROS_ME)
+    return list(CENTROS_MP) + list(CENTROS_ME)
+
+
+col_idcentro, col_semana, col_grupo, col_modo = st.columns(4)
+
+with col_grupo:
+    st.markdown("**Grupo**")
+    grupo_label = st.radio(
+        "grupo", list(GRUPOS.keys()),
+        horizontal=True, label_visibility="collapsed", key="grupo",
     )
+grupo = GRUPOS[grupo_label]
+centros_grupo = _centros_de_grupo(grupo)
+opciones_idcentro = ["Todos"] + centros_grupo
+
+def _marcar_todos_idcentro():
+    seleccion_actual = st.session_state.get("idcentro_ms", [])
+    if "Todos" in seleccion_actual and set(seleccion_actual) != set(opciones_idcentro):
+        st.session_state["idcentro_ms"] = list(opciones_idcentro)
+
+
+with col_idcentro:
+    st.markdown("**IdCentro**")
+    if "idcentro_ms" not in st.session_state or not set(st.session_state["idcentro_ms"]) <= set(opciones_idcentro):
+        st.session_state["idcentro_ms"] = ["Todos"]
+
+    seleccion_idcentro = st.multiselect(
+        "idcentro_filtro", opciones_idcentro,
+        label_visibility="collapsed", key="idcentro_ms",
+        on_change=_marcar_todos_idcentro,
+    )
+
+if "Todos" in seleccion_idcentro:
+    idcentro_filtro = None
+else:
+    idcentro_filtro = tuple(seleccion_idcentro)  # tupla vacia = no mostrar ningun centro
+
 with col_semana:
     st.markdown("**Semana**")
     semana_label = st.radio(
         "semana", ["Semana actual", "Próxima semana", "Semana actual + 2"],
         horizontal=True, label_visibility="collapsed", key="semana",
     )
-with col_grupo:
-    st.markdown("**Grupo**")
-    grupo_label = st.radio(
-        "grupo", ["Materia Prima", "Material de Empaque"],
-        horizontal=True, label_visibility="collapsed", key="grupo",
-    )
+semana = {"Semana actual": 0, "Próxima semana": 1, "Semana actual + 2": 2}[semana_label]
+
 with col_modo:
     st.markdown("**Inventario**")
     modo_label = st.radio(
         "modo", ["Actual", "Simulado"],
         horizontal=True, label_visibility="collapsed", key="modo",
     )
-
-orden = "fisico" if orden_label == "Por lugar físico" else "razon_social"
-semana = {"Semana actual": 0, "Próxima semana": 1, "Semana actual + 2": 2}[semana_label]
-grupo = "MP" if grupo_label == "Materia Prima" else "ME"
 modo = "actual" if modo_label == "Actual" else "simulado"
-
-centros_grupo = CENTROS_MP if grupo == "MP" else CENTROS_ME
-
-st.markdown("**Centro**")
-opciones_centro = centros_disponibles(grupo, orden)
-
-if st.session_state.get("centro_activo") not in opciones_centro:
-    st.session_state["centro_activo"] = None
-
-st.markdown(render_pill_filtro_css(opciones_centro, st.session_state["centro_activo"], "pill"), unsafe_allow_html=True)
-
-with st.container(key="fila_pills_centro"):
-    for nombre in opciones_centro:
-        clave_boton = f"pill_{nombre}".replace(" ", "_")
-        with st.container(key=clave_boton):
-            if st.button(nombre, key=f"pill_btn_{clave_boton}"):
-                st.session_state["centro_activo"] = (
-                    None if st.session_state["centro_activo"] == nombre else nombre
-                )
-
-centro_filtro = st.session_state["centro_activo"]
 
 busqueda = st.text_input("🔍 Buscar Material (ID o Nombre)", key="busqueda")
 
-# ================= Filtros de nivelacion/venta interna =================
-col_idcentro, col_clasif, col_destino = st.columns(3)
-with col_idcentro:
-    st.markdown("**IdCentro**")
-    idcentro_label = st.selectbox(
-        "idcentro_filtro", ["Todos"] + centros_grupo, label_visibility="collapsed", key="idcentro_filtro",
-    )
+# --- Filtros de nivelacion/venta interna ---
+col_clasif, col_destino = st.columns(2)
 with col_clasif:
     st.markdown("**Clasificación**")
     clasificacion_label = st.radio(
@@ -136,13 +140,12 @@ with col_destino:
         "centro_destino_filtro", ["Todos"] + centros_grupo, label_visibility="collapsed", key="centro_destino_filtro",
     )
 
-idcentro_filtro = None if idcentro_label == "Todos" else idcentro_label
 clasificacion_filtro = None if clasificacion_label == "Todas" else clasificacion_label
 centro_destino_filtro = None if centro_destino_label == "Todos" else centro_destino_label
 
 filas_combinadas = construir_filas_combinadas(
-    df_consolidado, grupo=grupo, semana=semana, orden=orden, modo=modo,
-    centro_filtro=centro_filtro, idcentro_filtro=idcentro_filtro,
+    df_consolidado, grupo=grupo, semana=semana, modo=modo,
+    idcentro_filtro=idcentro_filtro,
     centro_destino_filtro=centro_destino_filtro, clasificacion_filtro=clasificacion_filtro,
 )
 

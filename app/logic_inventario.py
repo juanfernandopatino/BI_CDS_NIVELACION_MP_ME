@@ -16,57 +16,11 @@ import streamlit as st
 CENTROS_MP = ["CPS1", "CPS2", "CPT2", "CPB2", "CPB1"]
 CENTROS_ME = ["CPS9", "CPT9", "CPB9", "CPE9", "CPK9", "CPO9"]
 
-LUGAR_FISICO_POR_LETRA = {
-    "S": "Super",
-    "T": "Trululu",
-    "B": "Bianchi",
-    "E": "Oka Loka",
-    "O": "Oka Loka",
-    "K": "Centro robotizado",
-}
-
-RAZON_SOCIAL_POR_DIGITO = {
-    "1": "Super",
-    "2": "Trululu",
-    "3": "Comercializadora",
-    "9": "Comercializadora",
-}
-
-# Orden fijo en el que deben aparecer los grupos de centro, sin importar
-# si se clasifico por lugar fisico o por razon social.
-ORDEN_CENTROS = ["Super", "Trululu", "Bianchi", "Oka Loka", "Centro robotizado", "Comercializadora"]
-
-
-def clasificar_lugar_fisico(id_centro: str) -> str:
-    letra = id_centro[2].upper()
-    return LUGAR_FISICO_POR_LETRA.get(letra, "Otro")
-
-
-def clasificar_razon_social(id_centro: str) -> str:
-    digito = id_centro[-1]
-    return RAZON_SOCIAL_POR_DIGITO.get(digito, "Otro")
-
 
 def clasificar_traslado(origen: str, destino: str) -> str:
     """Mismo ultimo digito de IdCentro = misma razon social = Nivelacion.
     Digito distinto = razones sociales distintas = Venta Interna."""
     return "Nivelacion" if origen[-1] == destino[-1] else "Venta Interna"
-
-
-def _indice_orden(nombre_centro: str) -> int:
-    try:
-        return ORDEN_CENTROS.index(nombre_centro)
-    except ValueError:
-        return len(ORDEN_CENTROS)
-
-
-def centros_disponibles(grupo: str, orden: str) -> list[str]:
-    """Nombres de centro (ya clasificados) que puede tener este grupo,
-    en el orden fijo Super/Trululu/Bianchi/Oka Loka/Centro robotizado/Comercializadora."""
-    centros = CENTROS_MP if grupo == "MP" else CENTROS_ME
-    clasificar = clasificar_lugar_fisico if orden == "fisico" else clasificar_razon_social
-    nombres = {clasificar(c) for c in centros}
-    return sorted(nombres, key=_indice_orden)
 
 
 def calcular_traslados_semana(estado: dict[str, dict], centros_ordenados: list[str]) -> list[dict]:
@@ -117,41 +71,82 @@ def calcular_traslados_semana(estado: dict[str, dict], centros_ordenados: list[s
 
 
 @st.cache_data(show_spinner=False)
-def simular_semanas(df_ancho: pd.DataFrame, grupo: str, modo: str) -> dict:
+def simular_semanas(df_largo: pd.DataFrame, grupo: str, modo: str) -> dict:
     """
     Devuelve, por material, el estado (inv_total, inv_libre_calidad,
     necesidad) de cada IdCentro fisico en las semanas 0, 1 y 2.
 
+    df_largo viene en formato largo (una fila por Material+Centro, ver
+    QUERY_INVENTARIO_NECESIDAD en data.py): IDMATERIAL, MATERIAL, IDCENTRO,
+    UNIDADMEDIDA, INVENTARIOLIBREUTILIZACION, INVENTARIOCALIDAD,
+    CANTIDADBLOQUEADO, INVENTARIOPRODUCCION, NECESIDADSEMANA0/1/2,
+    "Entrega Pendiente S0/1/2", "Fecha Entrega Programada S0/1/2" (ya
+    discriminadas por centro).
+
+    inv_total(semana0) = Libre + Calidad + Produccion.
+    inv_libre_calidad(semana0) = Libre + Calidad (nunca incluye Produccion,
+    que solo sirve para cubrir la necesidad del propio centro, nunca para
+    traslados). CantidadBloqueado es puramente informativo: no participa
+    en inv_total/inv_libre_calidad ni en la cascada o los traslados.
+
     modo="actual": cascada independiente por semana (igual que hoy en el
-    Cuadro 1), sin corregir ningun deficit.
-    modo="simulado": aplica, al final de cada semana, los traslados que
-    sugeriria calcular_traslados_semana para esa semana (resta al origen,
-    suma al destino, tanto en inv_total como en inv_libre_calidad) antes
-    de pasar a la semana siguiente.
+    Cuadro 1), sin corregir ningun deficit ni sumar entregas pendientes.
+    modo="simulado":
+    - Antes de calcular los traslados de la semana 0, suma la Entrega
+      Pendiente S0 de cada centro a su inv_total/inv_libre_calidad (ya que
+      ahora viene discriminada por centro real): esas ordenes llegan esta
+      semana, asi que un centro que las recibe ya cuenta con ese inventario
+      para decidir si necesita o puede dar un traslado. Las semanas 1 y 2
+      no suman entrega pendiente (solo aplica a la semana actual).
+    - Al final de cada semana, aplica los traslados que sugeriria
+      calcular_traslados_semana para esa semana (resta al origen, suma al
+      destino, tanto en inv_total como en inv_libre_calidad) antes de pasar
+      a la semana siguiente.
 
     Estructura del resultado:
         {IdMaterial: {"Material":, "UnidadMedida":,
-                      "estado": {IdCentro: {0: {...}, 1: {...}, 2: {...}}}}}
+                      "estado": {IdCentro: {0: {...}, 1: {...}, 2: {...}}},
+                      "bloqueado": {IdCentro: cantidad},
+                      "entrega_pendiente": {IdCentro: {0: {"cantidad":, "fecha":}, 1: {...}, 2: {...}}}}}
     """
     centros = CENTROS_MP if grupo == "MP" else CENTROS_ME
     prefijo = "13" if grupo == "MP" else "14"
-    df_grupo = df_ancho[df_ancho["IDMATERIAL"].str.startswith(prefijo)]
+    df_grupo = df_largo[df_largo["IDMATERIAL"].str.startswith(prefijo)]
 
     resultado = {}
-    for _, material in df_grupo.iterrows():
-        id_mat = material["IDMATERIAL"]
+    for id_mat, filas_material in df_grupo.groupby("IDMATERIAL"):
+        filas_centro = {fila["IDCENTRO"]: fila for _, fila in filas_material.iterrows()}
         estado_centro: dict[str, dict[int, dict]] = {c: {} for c in centros}
+        bloqueado_centro: dict[str, float] = {}
+        entrega_centro: dict[str, dict[int, dict]] = {c: {} for c in centros}
 
         for centro in centros:
-            inv = material.get(f"{centro} Inv", 0) or 0
-            prod = material.get(f"{centro} Prod", 0) or 0
+            fila = filas_centro.get(centro)
+            libre = (fila.get("INVENTARIOLIBREUTILIZACION", 0) or 0) if fila is not None else 0
+            calidad = (fila.get("INVENTARIOCALIDAD", 0) or 0) if fila is not None else 0
+            produccion = (fila.get("INVENTARIOPRODUCCION", 0) or 0) if fila is not None else 0
+            bloqueado_centro[centro] = (fila.get("CANTIDADBLOQUEADO", 0) or 0) if fila is not None else 0
+            inv_libre_calidad = libre + calidad
+
             estado_centro[centro][0] = {
-                "inv_total": inv,
-                "inv_libre_calidad": inv - prod,
-                "necesidad": material.get(f"{centro} NS0", 0) or 0,
+                "inv_total": inv_libre_calidad + produccion,
+                "inv_libre_calidad": inv_libre_calidad,
+                "necesidad": (fila.get("NECESIDADSEMANA0", 0) or 0) if fila is not None else 0,
             }
-            estado_centro[centro][1] = {"necesidad": material.get(f"{centro} NS1", 0) or 0}
-            estado_centro[centro][2] = {"necesidad": material.get(f"{centro} NS2", 0) or 0}
+            estado_centro[centro][1] = {"necesidad": (fila.get("NECESIDADSEMANA1", 0) or 0) if fila is not None else 0}
+            estado_centro[centro][2] = {"necesidad": (fila.get("NECESIDADSEMANA2", 0) or 0) if fila is not None else 0}
+
+            for s in (0, 1, 2):
+                entrega_centro[centro][s] = {
+                    "cantidad": (fila.get(f"Entrega Pendiente S{s}", 0) or 0) if fila is not None else 0,
+                    "fecha": (fila.get(f"Fecha Entrega Programada S{s}")) if fila is not None else None,
+                }
+
+        if modo == "simulado":
+            for centro in centros:
+                cantidad_s0 = entrega_centro[centro][0]["cantidad"]
+                estado_centro[centro][0]["inv_total"] += cantidad_s0
+                estado_centro[centro][0]["inv_libre_calidad"] += cantidad_s0
 
         for semana in (0, 1):
             for centro in centros:
@@ -171,10 +166,13 @@ def simular_semanas(df_ancho: pd.DataFrame, grupo: str, modo: str) -> dict:
                     estado_centro[destino][semana + 1]["inv_total"] += cantidad
                     estado_centro[destino][semana + 1]["inv_libre_calidad"] += cantidad
 
+        primera = filas_material.iloc[0]
         resultado[id_mat] = {
-            "Material": material["MATERIAL"],
-            "UnidadMedida": material["UNIDADMEDIDA"],
+            "Material": primera["MATERIAL"],
+            "UnidadMedida": primera["UNIDADMEDIDA"],
             "estado": estado_centro,
+            "bloqueado": bloqueado_centro,
+            "entrega_pendiente": entrega_centro,
         }
 
     return resultado
@@ -182,67 +180,60 @@ def simular_semanas(df_ancho: pd.DataFrame, grupo: str, modo: str) -> dict:
 
 @st.cache_data(show_spinner=False)
 def construir_filas_inventario_necesidad(
-    df_ancho: pd.DataFrame, grupo: str, semana: int, orden: str,
-    centro_filtro: str | None = None, modo: str = "actual",
+    df_largo: pd.DataFrame, grupo: str, semana: int,
+    idcentro_filtro: tuple[str, ...] | None = None, modo: str = "actual",
 ) -> list[dict]:
     """
     grupo: "MP" o "ME"
     semana: 0, 1 o 2
-    orden: "fisico" o "razon_social"
-    centro_filtro: si se indica, solo se devuelven filas de ese centro (ya clasificado)
+    idcentro_filtro: si se indica, solo se devuelven filas de esos IdCentro
+        (tupla de codigos reales, ej. ("CPS1", "CPT2")).
     modo: "actual" o "simulado" (ver simular_semanas)
-
-    Cuando dos IdCentro caen en el mismo nombre de centro (ej. CPS1 y CPS2
-    -> "Super"), la pastilla de Centro se agrupa visualmente, pero
-    Inventario/Necesidad/Entrega Pendiente/Fecha Entrega NO se suman: cada
-    IdCentro conserva sus propios valores, en su propia fila.
     """
     centros = CENTROS_MP if grupo == "MP" else CENTROS_ME
-    clasificar = clasificar_lugar_fisico if orden == "fisico" else clasificar_razon_social
-    centros_ordenados = sorted(centros, key=lambda c: _indice_orden(clasificar(c)))
 
-    prefijo = "13" if grupo == "MP" else "14"
-    df_grupo = df_ancho[df_ancho["IDMATERIAL"].str.startswith(prefijo)]
-    estados = simular_semanas(df_ancho, grupo, modo)
+    estados = simular_semanas(df_largo, grupo, modo)
+    resaltar_entrega = modo == "simulado" and semana == 0
 
     filas = []
-    for _, material in df_grupo.iterrows():
-        id_mat = material["IDMATERIAL"]
-        entrega_pendiente = material.get(f"Entrega Pendiente NS{semana}", 0) or 0
-        fecha_entrega = material.get(f"Fecha Entrega Programada NS{semana}")
-        estado_centro = estados[id_mat]["estado"]
+    for id_mat, info in estados.items():
+        estado_centro = info["estado"]
+        bloqueado_centro = info["bloqueado"]
+        entrega_centro = info["entrega_pendiente"]
 
-        for centro in centros_ordenados:
-            nombre = clasificar(centro)
-            if centro_filtro is not None and nombre != centro_filtro:
+        for centro in centros:
+            if idcentro_filtro is not None and centro not in idcentro_filtro:
                 continue
 
             datos_semana = estado_centro[centro][semana]
             inv = datos_semana["inv_total"]
             nec = datos_semana["necesidad"]
 
-            if inv == 0 and nec == 0 and entrega_pendiente == 0:
+            if inv == 0 and nec == 0:
                 continue
+
+            entrega = entrega_centro[centro][semana]
 
             filas.append({
                 "IdMaterial": id_mat,
-                "Material": material["MATERIAL"],
-                "UnidadMedida": material["UNIDADMEDIDA"],
-                "Centro": nombre,
+                "Material": info["Material"],
+                "UnidadMedida": info["UnidadMedida"],
                 "IdCentro": centro,
                 "Inventario": inv,
                 "Necesidad": nec,
-                "EntregaPendiente": entrega_pendiente,
-                "FechaEntrega": fecha_entrega,
+                "Bloqueado": bloqueado_centro.get(centro, 0),
+                "EntregaPendiente": entrega["cantidad"],
+                "FechaEntrega": entrega["fecha"],
+                "ResaltarEntrega": resaltar_entrega,
             })
 
-    filas.sort(key=lambda f: (f["IdMaterial"], _indice_orden(f["Centro"])))
+    filas.sort(key=lambda f: (f["IdMaterial"], centros.index(f["IdCentro"])))
     return filas
 
 
 @st.cache_data(show_spinner=False)
 def construir_filas_traslados(
-    df_ancho: pd.DataFrame, grupo: str, semana: int, modo: str,
+    df_largo: pd.DataFrame, grupo: str, semana: int, modo: str,
     origen_filtro: str | None = None, destino_filtro: str | None = None,
     clasificacion_filtro: str | None = None,
 ) -> list[dict]:
@@ -250,7 +241,7 @@ def construir_filas_traslados(
     modo (actual/simulado) indicados, con filtros opcionales de Origen,
     Destino y Clasificacion (todos por IdCentro/nombre real)."""
     centros = CENTROS_MP if grupo == "MP" else CENTROS_ME
-    estados = simular_semanas(df_ancho, grupo, modo)
+    estados = simular_semanas(df_largo, grupo, modo)
 
     filas = []
     for id_mat, info in estados.items():
@@ -277,4 +268,70 @@ def construir_filas_traslados(
             })
 
     filas.sort(key=lambda f: (f["IdMaterial"], f["Origen"]))
+    return filas
+
+
+def construir_filas_combinadas(
+    df_largo: pd.DataFrame, grupo: str, semana: int, modo: str,
+    idcentro_filtro: tuple[str, ...] | None = None,
+    centro_destino_filtro: tuple[str, ...] | None = None, clasificacion_filtro: str | None = None,
+) -> list[dict]:
+    """
+    Combina Inventario y Necesidad con las Nivelaciones/Ventas Internas
+    sugeridas en una sola vista: cada fila de `construir_filas_inventario_necesidad`
+    (un IdCentro real) se expande en una sub-fila por cada traslado donde ese
+    IdCentro participa como ORIGEN (el que despacha), agregando
+    CentroNivelar/CantidadNivelar/ClasificacionNivelar. Un IdCentro que solo
+    participa como destino (recibe) no muestra nada en esas 3 columnas, ya
+    que el traslado ya se ve en la fila de su origen. Si no participa como
+    origen en ningun traslado, queda una sola fila con esos 3 campos en None
+    (a menos que haya un filtro de centro_destino/clasificacion activo, en
+    cuyo caso esa fila sin coincidencia se oculta).
+
+    grupo: "MP", "ME" o "AMBOS" (combina ambos grupos en una sola lista).
+    idcentro_filtro: tupla de codigos reales de IdCentro a incluir (None = todos).
+    centro_destino_filtro: tupla de IdCentro; filtra las sub-filas de
+    nivelacion cuyo CentroNivelar este en esa tupla (None = todos).
+    """
+    if grupo == "AMBOS":
+        return [
+            *construir_filas_combinadas(
+                df_largo, "MP", semana, modo, idcentro_filtro, centro_destino_filtro, clasificacion_filtro,
+            ),
+            *construir_filas_combinadas(
+                df_largo, "ME", semana, modo, idcentro_filtro, centro_destino_filtro, clasificacion_filtro,
+            ),
+        ]
+
+    filas_inv = construir_filas_inventario_necesidad(
+        df_largo, grupo=grupo, semana=semana, idcentro_filtro=idcentro_filtro, modo=modo,
+    )
+    filas_tras = construir_filas_traslados(df_largo, grupo=grupo, semana=semana, modo=modo)
+
+    nivelaciones: dict[tuple[str, str], list[dict]] = {}
+    for t in filas_tras:
+        nivelaciones.setdefault((t["IdMaterial"], t["Origen"]), []).append({
+            "CentroNivelar": t["Destino"],
+            "CantidadNivelar": t["Cantidad"],
+            "ClasificacionNivelar": t["Clasificacion"],
+        })
+
+    hay_filtro_nivelacion = centro_destino_filtro is not None or clasificacion_filtro is not None
+
+    filas = []
+    for fila in filas_inv:
+        matches = nivelaciones.get((fila["IdMaterial"], fila["IdCentro"]), [])
+        if centro_destino_filtro is not None:
+            matches = [m for m in matches if m["CentroNivelar"] in centro_destino_filtro]
+        if clasificacion_filtro is not None:
+            matches = [m for m in matches if m["ClasificacionNivelar"] == clasificacion_filtro]
+
+        if not matches:
+            if hay_filtro_nivelacion:
+                continue
+            filas.append({**fila, "CentroNivelar": None, "CantidadNivelar": None, "ClasificacionNivelar": None})
+        else:
+            for match in matches:
+                filas.append({**fila, **match})
+
     return filas

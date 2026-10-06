@@ -8,18 +8,13 @@ import streamlit as st
 
 from styles import GLOBAL_CSS, CLASIFICACION_COLORES
 from components import (
-    render_header,
-    render_grouped_table,
+    render_combinado_table,
     render_card,
-    render_pill_filtro_css,
-    render_traslados_table,
     render_count_badges,
 )
 from data import cargar_inventario_necesidad
 from logic_inventario import (
-    construir_filas_inventario_necesidad,
-    construir_filas_traslados,
-    centros_disponibles,
+    construir_filas_combinadas,
     CENTROS_MP,
     CENTROS_ME,
 )
@@ -28,7 +23,7 @@ st.set_page_config(page_title="Nivelacion y Ventas Internas MP y ME", layout="wi
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 
 # ---------- Header ----------
-fecha_actualizacion = "" # Deja vacío si no necesitas la fecha
+fecha_actualizacion = ""  # Deja vacío si no necesitas la fecha
 semana_actual = None
 
 _semana_txt = f" &nbsp;·&nbsp; Semana <b>{semana_actual}</b>" if semana_actual else ""
@@ -65,149 +60,131 @@ st.markdown(
 with st.spinner("Cargando datos desde Snowflake..."):
     df_consolidado = cargar_inventario_necesidad()
 
-tab_inventario, tab_traslados = st.tabs(["Inventario y Necesidad", "Nivelaciones y Ventas Internas"])
+# ================= Filtros =================
 
-# ================= Pestaña 1: Inventario y Necesidad =================
-with tab_inventario:
-    col_orden, col_semana, col_grupo, col_modo = st.columns(4)
-    with col_orden:
-        st.markdown("**Orden**")
-        orden_label = st.radio(
-            "orden", ["Por lugar físico", "Por razón social"],
-            horizontal=True, label_visibility="collapsed", key="orden_c1",
-        )
-    with col_semana:
-        st.markdown("**Semana**")
-        semana_label = st.radio(
-            "semana", ["Semana actual", "Próxima semana", "Semana actual + 2"],
-            horizontal=True, label_visibility="collapsed", key="semana_c1",
-        )
-    with col_grupo:
-        st.markdown("**Grupo**")
-        grupo_label = st.radio(
-            "grupo", ["Materia Prima", "Material de Empaque"],
-            horizontal=True, label_visibility="collapsed", key="grupo_c1",
-        )
-    with col_modo:
-        st.markdown("**Inventario**")
-        modo_label = st.radio(
-            "modo", ["Actual", "Simulado"],
-            horizontal=True, label_visibility="collapsed", key="modo_c1",
-        )
+# --- Grupo (necesario primero para saber que centros ofrecer en IdCentro) ---
+GRUPOS = {"Materia Prima": "MP", "Material de Empaque": "ME", "Ambos": "AMBOS"}
 
-    orden = "fisico" if orden_label == "Por lugar físico" else "razon_social"
-    semana_c1 = {"Semana actual": 0, "Próxima semana": 1, "Semana actual + 2": 2}[semana_label]
-    grupo_c1 = "MP" if grupo_label == "Materia Prima" else "ME"
-    modo_c1 = "actual" if modo_label == "Actual" else "simulado"
 
-    st.markdown("**Centro**")
-    opciones_centro = centros_disponibles(grupo_c1, orden)
+def _centros_de_grupo(grupo_valor: str) -> list[str]:
+    if grupo_valor == "MP":
+        return list(CENTROS_MP)
+    if grupo_valor == "ME":
+        return list(CENTROS_ME)
+    return list(CENTROS_MP) + list(CENTROS_ME)
 
-    if st.session_state.get("centro_activo") not in opciones_centro:
-        st.session_state["centro_activo"] = None
 
-    st.markdown(render_pill_filtro_css(opciones_centro, st.session_state["centro_activo"], "pill"), unsafe_allow_html=True)
+col_idcentro, col_semana, col_grupo, col_modo = st.columns(4)
 
-    with st.container(key="fila_pills_centro"):
-        for nombre in opciones_centro:
-            clave_boton = f"pill_{nombre}".replace(" ", "_")
-            with st.container(key=clave_boton):
-                if st.button(nombre, key=f"pill_btn_{clave_boton}"):
-                    st.session_state["centro_activo"] = (
-                        None if st.session_state["centro_activo"] == nombre else nombre
-                    )
+with col_grupo:
+    st.markdown("**Grupo**")
+    grupo_label = st.radio(
+        "grupo", list(GRUPOS.keys()),
+        horizontal=True, label_visibility="collapsed", key="grupo",
+    )
+grupo = GRUPOS[grupo_label]
+centros_grupo = _centros_de_grupo(grupo)
+opciones_idcentro = ["Todos"] + centros_grupo
 
-    centro_filtro = st.session_state["centro_activo"]
+def _marcar_todos_idcentro():
+    seleccion_actual = st.session_state.get("idcentro_ms", [])
+    if "Todos" in seleccion_actual and set(seleccion_actual) != set(opciones_idcentro):
+        st.session_state["idcentro_ms"] = list(opciones_idcentro)
 
-    busqueda_c1 = st.text_input("🔍 Buscar Material (ID o Nombre)", key="busqueda_c1")
 
-    filas_cuadro1 = construir_filas_inventario_necesidad(
-        df_consolidado, grupo=grupo_c1, semana=semana_c1, orden=orden, centro_filtro=centro_filtro, modo=modo_c1,
+with col_idcentro:
+    st.markdown("**IdCentro**")
+    if "idcentro_ms" not in st.session_state or not set(st.session_state["idcentro_ms"]) <= set(opciones_idcentro):
+        st.session_state["idcentro_ms"] = ["Todos"]
+
+    seleccion_idcentro = st.multiselect(
+        "idcentro_filtro", opciones_idcentro,
+        label_visibility="collapsed", key="idcentro_ms",
+        on_change=_marcar_todos_idcentro,
     )
 
-    if busqueda_c1:
-        termino = busqueda_c1.lower()
-        filas_cuadro1 = [f for f in filas_cuadro1 if termino in str(f.get("IdMaterial", "")).lower() or termino in str(f.get("Material", "")).lower()]
+if "Todos" in seleccion_idcentro:
+    idcentro_filtro = None
+else:
+    idcentro_filtro = tuple(seleccion_idcentro)  # tupla vacia = no mostrar ningun centro
 
-    if not filas_cuadro1:
-        st.info("No hay datos para los filtros seleccionados.")
-    else:
-        st.markdown(render_card(render_grouped_table(filas_cuadro1)), unsafe_allow_html=True)
+with col_semana:
+    st.markdown("**Semana**")
+    semana_label = st.radio(
+        "semana", ["Semana actual", "Próxima semana", "Semana actual + 2"],
+        horizontal=True, label_visibility="collapsed", key="semana",
+    )
+semana = {"Semana actual": 0, "Próxima semana": 1, "Semana actual + 2": 2}[semana_label]
 
-# ================= Pestaña 2: Nivelaciones y Ventas Internas =================
-with tab_traslados:
-    col_semana2, col_grupo2, col_modo2 = st.columns(3)
-    with col_semana2:
-        st.markdown("**Semana**")
-        semana_label2 = st.radio(
-            "semana", ["Semana actual", "Próxima semana", "Semana actual + 2"],
-            horizontal=True, label_visibility="collapsed", key="semana_c2",
-        )
-    with col_grupo2:
-        st.markdown("**Grupo**")
-        grupo_label2 = st.radio(
-            "grupo", ["Materia Prima", "Material de Empaque"],
-            horizontal=True, label_visibility="collapsed", key="grupo_c2",
-        )
-    with col_modo2:
-        st.markdown("**Inventario**")
-        modo_label2 = st.radio(
-            "modo", ["Actual", "Simulado"],
-            horizontal=True, label_visibility="collapsed", key="modo_c2",
-        )
+with col_modo:
+    st.markdown("**Inventario**")
+    modo_label = st.radio(
+        "modo", ["Actual", "Simulado"],
+        horizontal=True, label_visibility="collapsed", key="modo",
+    )
+modo = "actual" if modo_label == "Actual" else "simulado"
 
-    semana_c2 = {"Semana actual": 0, "Próxima semana": 1, "Semana actual + 2": 2}[semana_label2]
-    grupo_c2 = "MP" if grupo_label2 == "Materia Prima" else "ME"
-    modo_c2 = "actual" if modo_label2 == "Actual" else "simulado"
+busqueda = st.text_input("🔍 Buscar Material (ID o Nombre)", key="busqueda")
 
-    centros_grupo = CENTROS_MP if grupo_c2 == "MP" else CENTROS_ME
+# --- Filtros de nivelacion/venta interna ---
+col_clasif, col_destino = st.columns(2)
+with col_clasif:
+    st.markdown("**Clasificación**")
+    clasificacion_label = st.radio(
+        "clasificacion_filtro", ["Todas", "Nivelacion", "Venta Interna"],
+        horizontal=True, label_visibility="collapsed", key="clasificacion_filtro",
+    )
+opciones_centro_destino = ["Todos"] + centros_grupo
 
-    col_origen, col_destino, col_clasif = st.columns(3)
-    with col_origen:
-        st.markdown("**Origen**")
-        origen_label = st.selectbox(
-            "origen_traslado", ["Todos"] + centros_grupo, label_visibility="collapsed", key="origen_c2",
-        )
-    with col_destino:
-        st.markdown("**Destino**")
-        destino_label = st.selectbox(
-            "destino_traslado", ["Todos"] + centros_grupo, label_visibility="collapsed", key="destino_c2",
-        )
-    with col_clasif:
-        st.markdown("**Clasificación**")
-        clasificacion_label = st.radio(
-            "clasificacion_traslado", ["Todas", "Nivelacion", "Venta Interna"],
-            horizontal=True, label_visibility="collapsed", key="clasificacion_c2",
-        )
+def _marcar_todos_centro_destino():
+    seleccion_actual = st.session_state.get("centro_destino_ms", [])
+    if "Todos" in seleccion_actual and set(seleccion_actual) != set(opciones_centro_destino):
+        st.session_state["centro_destino_ms"] = list(opciones_centro_destino)
 
-    origen_filtro = None if origen_label == "Todos" else origen_label
-    destino_filtro = None if destino_label == "Todos" else destino_label
-    clasificacion_filtro = None if clasificacion_label == "Todas" else clasificacion_label
 
-    busqueda_c2 = st.text_input("🔍 Buscar Material (ID o Nombre)", key="busqueda_c2")
+with col_destino:
+    st.markdown("**Centro Destino**")
+    if "centro_destino_ms" not in st.session_state or not set(st.session_state["centro_destino_ms"]) <= set(opciones_centro_destino):
+        st.session_state["centro_destino_ms"] = ["Todos"]
 
-    filas_traslados = construir_filas_traslados(
-        df_consolidado, grupo=grupo_c2, semana=semana_c2, modo=modo_c2,
-        origen_filtro=origen_filtro, destino_filtro=destino_filtro, clasificacion_filtro=clasificacion_filtro,
+    seleccion_centro_destino = st.multiselect(
+        "centro_destino_filtro", opciones_centro_destino,
+        label_visibility="collapsed", key="centro_destino_ms",
+        on_change=_marcar_todos_centro_destino,
     )
 
-    if busqueda_c2:
-        termino = busqueda_c2.lower()
-        filas_traslados = [f for f in filas_traslados if termino in str(f.get("IdMaterial", "")).lower() or termino in str(f.get("Material", "")).lower()]
+clasificacion_filtro = None if clasificacion_label == "Todas" else clasificacion_label
+if "Todos" in seleccion_centro_destino:
+    centro_destino_filtro = None
+else:
+    centro_destino_filtro = tuple(seleccion_centro_destino)  # tupla vacia = ningun destino coincide
 
-    total_nivelacion = sum(1 for f in filas_traslados if f["Clasificacion"] == "Nivelacion")
-    total_venta_interna = sum(1 for f in filas_traslados if f["Clasificacion"] == "Venta Interna")
+filas_combinadas = construir_filas_combinadas(
+    df_consolidado, grupo=grupo, semana=semana, modo=modo,
+    idcentro_filtro=idcentro_filtro,
+    centro_destino_filtro=centro_destino_filtro, clasificacion_filtro=clasificacion_filtro,
+)
 
-    st.markdown(
-        render_count_badges([
-            ("TOTAL TRASLADOS", str(len(filas_traslados)), "#013066"),
-            ("NIVELACION", str(total_nivelacion), CLASIFICACION_COLORES["Nivelacion"]),
-            ("VENTA INTERNA", str(total_venta_interna), CLASIFICACION_COLORES["Venta Interna"]),
-        ]),
-        unsafe_allow_html=True,
-    )
+if busqueda:
+    termino = busqueda.lower()
+    filas_combinadas = [
+        f for f in filas_combinadas
+        if termino in str(f.get("IdMaterial", "")).lower() or termino in str(f.get("Material", "")).lower()
+    ]
 
-    if not filas_traslados:
-        st.info("No hay traslados que cumplan con los filtros seleccionados.")
-    else:
-        st.markdown(render_card(render_traslados_table(filas_traslados)), unsafe_allow_html=True)
+total_nivelacion = sum(1 for f in filas_combinadas if f.get("ClasificacionNivelar") == "Nivelacion")
+total_venta_interna = sum(1 for f in filas_combinadas if f.get("ClasificacionNivelar") == "Venta Interna")
+
+st.markdown(
+    render_count_badges([
+        ("TOTAL TRASLADOS", str(total_nivelacion + total_venta_interna), "#013066"),
+        ("NIVELACION", str(total_nivelacion), CLASIFICACION_COLORES["Nivelacion"]),
+        ("VENTA INTERNA", str(total_venta_interna), CLASIFICACION_COLORES["Venta Interna"]),
+    ]),
+    unsafe_allow_html=True,
+)
+
+if not filas_combinadas:
+    st.info("No hay datos para los filtros seleccionados.")
+else:
+    st.markdown(render_card(render_combinado_table(filas_combinadas)), unsafe_allow_html=True)

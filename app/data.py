@@ -44,11 +44,13 @@ def _query(sql: str) -> pd.DataFrame:
 
 
 QUERY_INVENTARIO_NECESIDAD = """
--- Consolidado de Inventario + Necesidad MRP (semana 0, 1 y 2) + Entregas Pendientes de OC por material y centro.
+-- Inventario + Produccion + Entregas Pendientes de OC + Necesidad MRP (semana 0,1,2), una fila por Material + Centro.
 -- Centros materia prima (material inicia por '13'): CPS1, CPS2, CPT2, CPB2, CPB1
 -- Centros empaque (material inicia por '14'): CPS9, CPT9, CPB9, CPE9, CPK9, CPO9
--- Excluye los almacenes: 0003, 0004, 0005, 0006, 0017, 0018, 0038, 0039 (solo aplica a inventario normal)
+-- Excluye los almacenes: 0003, 0004, 0005, 0006, 0017, 0018, 0038, 0039 (solo aplica a inventario normal, InventarioProduccion es el 85% de esos almacenes)
 -- Semana 0 = semana actual (lunes a domingo), Semana 1 = siguiente semana, Semana 2 = la que sigue.
+-- Entrega Pendiente: ordenes de compra no entregadas totalmente (IndicadorEntregaFinal = FALSE), sumando
+-- todos los almacenes, discriminadas por el centro real (IdCentroFase2) de TDS_VW_CDS_ORDENCOMPRA.
 
 WITH INV_BASE AS (
     SELECT
@@ -57,7 +59,8 @@ WITH INV_BASE AS (
         "IdCentroFase2"             as Centro,
         "UnidadMedidaBase"          as Unidad,
         "CantidadLibreUtilizacion"  as Libre,
-        "CantidadControlCalidad"   as Calidad
+        "CantidadControlCalidad"   as Calidad,
+        "CantidadBloqueado"        as Bloqueado
     FROM DB_TABLEAUDATASOURCE.CADENASUMINISTRO.TDS_VW_CDS_INVENTARIOMATERIALMMDIAACTUAL
     WHERE (
             ("IdMaterial" LIKE '13%' AND "IdCentroFase2" IN ('CPS1','CPS2','CPT2','CPB2','CPB1'))
@@ -79,26 +82,6 @@ PROD_BASE AS (
           )
       AND "IdAlmacen" IN ('0003','0004','0005','0006','0017','0018','0038','0039')
 ),
-PROD_AGG AS (
-    -- Solo se cuenta el 85% del inventario de esos almacenes de excepcion, desglosado por centro
-    -- (los campos _Prod se usan unicamente para sumarlos al Inv de cada centro, no se exponen como columnas nuevas)
-    SELECT
-        IdMaterial,
-        (SUM(Libre) + SUM(Calidad)) * 0.85 as INVENTARIOPRODUCCION,
-        SUM(CASE WHEN Centro = 'CPS1' THEN (Libre + Calidad) * 0.85 ELSE 0 END) as CPS1_Prod,
-        SUM(CASE WHEN Centro = 'CPS2' THEN (Libre + Calidad) * 0.85 ELSE 0 END) as CPS2_Prod,
-        SUM(CASE WHEN Centro = 'CPT2' THEN (Libre + Calidad) * 0.85 ELSE 0 END) as CPT2_Prod,
-        SUM(CASE WHEN Centro = 'CPB2' THEN (Libre + Calidad) * 0.85 ELSE 0 END) as CPB2_Prod,
-        SUM(CASE WHEN Centro = 'CPB1' THEN (Libre + Calidad) * 0.85 ELSE 0 END) as CPB1_Prod,
-        SUM(CASE WHEN Centro = 'CPS9' THEN (Libre + Calidad) * 0.85 ELSE 0 END) as CPS9_Prod,
-        SUM(CASE WHEN Centro = 'CPT9' THEN (Libre + Calidad) * 0.85 ELSE 0 END) as CPT9_Prod,
-        SUM(CASE WHEN Centro = 'CPB9' THEN (Libre + Calidad) * 0.85 ELSE 0 END) as CPB9_Prod,
-        SUM(CASE WHEN Centro = 'CPE9' THEN (Libre + Calidad) * 0.85 ELSE 0 END) as CPE9_Prod,
-        SUM(CASE WHEN Centro = 'CPK9' THEN (Libre + Calidad) * 0.85 ELSE 0 END) as CPK9_Prod,
-        SUM(CASE WHEN Centro = 'CPO9' THEN (Libre + Calidad) * 0.85 ELSE 0 END) as CPO9_Prod
-    FROM PROD_BASE
-    GROUP BY IdMaterial
-),
 MRP_BASE AS (
     SELECT
         "MRP_IdMaterial"     as IdMaterial,
@@ -115,29 +98,34 @@ MRP_BASE AS (
           )
 ),
 PO_BASE AS (
-    -- Entregas pendientes de ordenes de compra activas, clasificadas por semana de entrega solicitada
+    -- Entregas pendientes de ordenes de compra (no entregadas totalmente), sumando todos los almacenes,
+    -- discriminadas por el centro real (IdCentroFase2)
     SELECT
-        PEN_IDMATERIAL as IdMaterial,
-        -PEN_CANTIDADPENDIENTE as Cantidad,
-        PEN_FECHAENTREGASOLICITADA as FechaEntrega,
-        DATEDIFF('WEEK', DATE_TRUNC('WEEK', CURRENT_DATE()), DATE_TRUNC('WEEK', PEN_FECHAENTREGASOLICITADA)) as Semana
-    FROM DB_EXCELENCIAYEFECTIVIDADORGANIZACIONAL.PUBLIC.EEO_PROVEEDORPENDIENTE
-    WHERE PEN_ESTADOORDEN = 'Pendiente'
-      AND PEN_TIPO_MATERIAL IN ('ZMPR','ZEMP')
-      AND (PEN_IDMATERIAL LIKE '13%' OR PEN_IDMATERIAL LIKE '14%')
+        "IdMaterial"           as IdMaterial,
+        "IdCentroFase2"        as Centro,
+        ("CantidadOrdenCompra" - "CantidadEntregada") as Cantidad,
+        "FechaEntregaPosicion" as FechaEntrega,
+        DATEDIFF('WEEK', DATE_TRUNC('WEEK', CURRENT_DATE()), DATE_TRUNC('WEEK', "FechaEntregaPosicion")) as Semana
+    FROM DB_TABLEAUDATASOURCE.CADENASUMINISTRO.TDS_VW_CDS_ORDENCOMPRA
+    WHERE "IndicadorEntregaFinal" = FALSE
+      AND "TipoMaterial" IN ('ZMPR','ZEMP')
+      AND (
+            ("IdMaterial" LIKE '13%' AND "IdCentroFase2" IN ('CPS1','CPS2','CPT2','CPB2','CPB1'))
+         OR ("IdMaterial" LIKE '14%' AND "IdCentroFase2" IN ('CPS9','CPT9','CPB9','CPE9','CPK9','CPO9'))
+          )
 ),
 PO_AGG AS (
     SELECT
-        IdMaterial,
-        SUM(CASE WHEN Semana = 0 THEN Cantidad ELSE 0 END) as EntregaPendienteNS0,
-        MIN(CASE WHEN Semana = 0 THEN FechaEntrega END)    as FechaEntregaProgramadaNS0,
-        SUM(CASE WHEN Semana = 1 THEN Cantidad ELSE 0 END) as EntregaPendienteNS1,
-        MIN(CASE WHEN Semana = 1 THEN FechaEntrega END)    as FechaEntregaProgramadaNS1,
-        SUM(CASE WHEN Semana = 2 THEN Cantidad ELSE 0 END) as EntregaPendienteNS2,
-        MIN(CASE WHEN Semana = 2 THEN FechaEntrega END)    as FechaEntregaProgramadaNS2
+        IdMaterial, Centro,
+        SUM(CASE WHEN Semana = 0 THEN Cantidad ELSE 0 END) as EntregaPendienteS0,
+        MIN(CASE WHEN Semana = 0 THEN FechaEntrega END)    as FechaEntregaProgramadaS0,
+        SUM(CASE WHEN Semana = 1 THEN Cantidad ELSE 0 END) as EntregaPendienteS1,
+        MIN(CASE WHEN Semana = 1 THEN FechaEntrega END)    as FechaEntregaProgramadaS1,
+        SUM(CASE WHEN Semana = 2 THEN Cantidad ELSE 0 END) as EntregaPendienteS2,
+        MIN(CASE WHEN Semana = 2 THEN FechaEntrega END)    as FechaEntregaProgramadaS2
     FROM PO_BASE
     WHERE Semana IN (0, 1, 2)
-    GROUP BY IdMaterial
+    GROUP BY IdMaterial, Centro
 ),
 UNIDAD_BASE AS (
     SELECT IdMaterial, Unidad FROM INV_BASE WHERE Unidad IS NOT NULL
@@ -151,99 +139,86 @@ UNIDAD_AGG AS (
     FROM UNIDAD_BASE
     GROUP BY IdMaterial
 ),
+MATERIALES_ALL AS (
+    SELECT DISTINCT IdMaterial FROM INV_BASE
+    UNION SELECT DISTINCT IdMaterial FROM PROD_BASE
+    UNION SELECT DISTINCT IdMaterial FROM MRP_BASE
+    UNION SELECT DISTINCT IdMaterial FROM PO_BASE
+),
+CENTROS_RAW AS (
+    SELECT 'CPS1' as Centro UNION ALL SELECT 'CPS2' UNION ALL SELECT 'CPT2' UNION ALL SELECT 'CPB2' UNION ALL SELECT 'CPB1'
+),
+CENTROS_EMP AS (
+    SELECT 'CPS9' as Centro UNION ALL SELECT 'CPT9' UNION ALL SELECT 'CPB9' UNION ALL SELECT 'CPE9' UNION ALL SELECT 'CPK9' UNION ALL SELECT 'CPO9'
+),
+MATERIAL_CENTRO AS (
+    SELECT MA.IdMaterial, C.Centro FROM MATERIALES_ALL MA CROSS JOIN CENTROS_RAW C WHERE MA.IdMaterial LIKE '13%'
+    UNION ALL
+    SELECT MA.IdMaterial, C.Centro FROM MATERIALES_ALL MA CROSS JOIN CENTROS_EMP C WHERE MA.IdMaterial LIKE '14%'
+),
 INV_AGG AS (
     SELECT
-        IdMaterial,
-        MAX(Material) as Material,
+        IdMaterial, Centro,
+        MAX(Material)             as Material,
         SUM(Libre)                as InventarioLibreUtilizacion,
-        SUM(Calidad)               as InventarioCalidad,
-        SUM(CASE WHEN Centro = 'CPS1' THEN Libre + Calidad ELSE 0 END) as CPS1_Inv,
-        SUM(CASE WHEN Centro = 'CPS2' THEN Libre + Calidad ELSE 0 END) as CPS2_Inv,
-        SUM(CASE WHEN Centro = 'CPT2' THEN Libre + Calidad ELSE 0 END) as CPT2_Inv,
-        SUM(CASE WHEN Centro = 'CPB2' THEN Libre + Calidad ELSE 0 END) as CPB2_Inv,
-        SUM(CASE WHEN Centro = 'CPB1' THEN Libre + Calidad ELSE 0 END) as CPB1_Inv,
-        SUM(CASE WHEN Centro = 'CPS9' THEN Libre + Calidad ELSE 0 END) as CPS9_Inv,
-        SUM(CASE WHEN Centro = 'CPT9' THEN Libre + Calidad ELSE 0 END) as CPT9_Inv,
-        SUM(CASE WHEN Centro = 'CPB9' THEN Libre + Calidad ELSE 0 END) as CPB9_Inv,
-        SUM(CASE WHEN Centro = 'CPE9' THEN Libre + Calidad ELSE 0 END) as CPE9_Inv,
-        SUM(CASE WHEN Centro = 'CPK9' THEN Libre + Calidad ELSE 0 END) as CPK9_Inv,
-        SUM(CASE WHEN Centro = 'CPO9' THEN Libre + Calidad ELSE 0 END) as CPO9_Inv
+        SUM(Calidad)              as InventarioCalidad,
+        SUM(Bloqueado)            as InventarioBloqueado
     FROM INV_BASE
-    GROUP BY IdMaterial
+    GROUP BY IdMaterial, Centro
+),
+PROD_AGG AS (
+    SELECT
+        IdMaterial, Centro,
+        (SUM(Libre) + SUM(Calidad)) * 0.85 as InventarioProduccion
+    FROM PROD_BASE
+    GROUP BY IdMaterial, Centro
 ),
 MRP_AGG AS (
     SELECT
-        IdMaterial,
-        SUM(CASE WHEN Centro = 'CPS1' AND Semana = 0 THEN Cantidad ELSE 0 END) as CPS1_NS0,
-        SUM(CASE WHEN Centro = 'CPS1' AND Semana = 1 THEN Cantidad ELSE 0 END) as CPS1_NS1,
-        SUM(CASE WHEN Centro = 'CPS1' AND Semana = 2 THEN Cantidad ELSE 0 END) as CPS1_NS2,
-        SUM(CASE WHEN Centro = 'CPS2' AND Semana = 0 THEN Cantidad ELSE 0 END) as CPS2_NS0,
-        SUM(CASE WHEN Centro = 'CPS2' AND Semana = 1 THEN Cantidad ELSE 0 END) as CPS2_NS1,
-        SUM(CASE WHEN Centro = 'CPS2' AND Semana = 2 THEN Cantidad ELSE 0 END) as CPS2_NS2,
-        SUM(CASE WHEN Centro = 'CPT2' AND Semana = 0 THEN Cantidad ELSE 0 END) as CPT2_NS0,
-        SUM(CASE WHEN Centro = 'CPT2' AND Semana = 1 THEN Cantidad ELSE 0 END) as CPT2_NS1,
-        SUM(CASE WHEN Centro = 'CPT2' AND Semana = 2 THEN Cantidad ELSE 0 END) as CPT2_NS2,
-        SUM(CASE WHEN Centro = 'CPB2' AND Semana = 0 THEN Cantidad ELSE 0 END) as CPB2_NS0,
-        SUM(CASE WHEN Centro = 'CPB2' AND Semana = 1 THEN Cantidad ELSE 0 END) as CPB2_NS1,
-        SUM(CASE WHEN Centro = 'CPB2' AND Semana = 2 THEN Cantidad ELSE 0 END) as CPB2_NS2,
-        SUM(CASE WHEN Centro = 'CPB1' AND Semana = 0 THEN Cantidad ELSE 0 END) as CPB1_NS0,
-        SUM(CASE WHEN Centro = 'CPB1' AND Semana = 1 THEN Cantidad ELSE 0 END) as CPB1_NS1,
-        SUM(CASE WHEN Centro = 'CPB1' AND Semana = 2 THEN Cantidad ELSE 0 END) as CPB1_NS2,
-        SUM(CASE WHEN Centro = 'CPS9' AND Semana = 0 THEN Cantidad ELSE 0 END) as CPS9_NS0,
-        SUM(CASE WHEN Centro = 'CPS9' AND Semana = 1 THEN Cantidad ELSE 0 END) as CPS9_NS1,
-        SUM(CASE WHEN Centro = 'CPS9' AND Semana = 2 THEN Cantidad ELSE 0 END) as CPS9_NS2,
-        SUM(CASE WHEN Centro = 'CPT9' AND Semana = 0 THEN Cantidad ELSE 0 END) as CPT9_NS0,
-        SUM(CASE WHEN Centro = 'CPT9' AND Semana = 1 THEN Cantidad ELSE 0 END) as CPT9_NS1,
-        SUM(CASE WHEN Centro = 'CPT9' AND Semana = 2 THEN Cantidad ELSE 0 END) as CPT9_NS2,
-        SUM(CASE WHEN Centro = 'CPB9' AND Semana = 0 THEN Cantidad ELSE 0 END) as CPB9_NS0,
-        SUM(CASE WHEN Centro = 'CPB9' AND Semana = 1 THEN Cantidad ELSE 0 END) as CPB9_NS1,
-        SUM(CASE WHEN Centro = 'CPB9' AND Semana = 2 THEN Cantidad ELSE 0 END) as CPB9_NS2,
-        SUM(CASE WHEN Centro = 'CPE9' AND Semana = 0 THEN Cantidad ELSE 0 END) as CPE9_NS0,
-        SUM(CASE WHEN Centro = 'CPE9' AND Semana = 1 THEN Cantidad ELSE 0 END) as CPE9_NS1,
-        SUM(CASE WHEN Centro = 'CPE9' AND Semana = 2 THEN Cantidad ELSE 0 END) as CPE9_NS2,
-        SUM(CASE WHEN Centro = 'CPK9' AND Semana = 0 THEN Cantidad ELSE 0 END) as CPK9_NS0,
-        SUM(CASE WHEN Centro = 'CPK9' AND Semana = 1 THEN Cantidad ELSE 0 END) as CPK9_NS1,
-        SUM(CASE WHEN Centro = 'CPK9' AND Semana = 2 THEN Cantidad ELSE 0 END) as CPK9_NS2,
-        SUM(CASE WHEN Centro = 'CPO9' AND Semana = 0 THEN Cantidad ELSE 0 END) as CPO9_NS0,
-        SUM(CASE WHEN Centro = 'CPO9' AND Semana = 1 THEN Cantidad ELSE 0 END) as CPO9_NS1,
-        SUM(CASE WHEN Centro = 'CPO9' AND Semana = 2 THEN Cantidad ELSE 0 END) as CPO9_NS2
+        IdMaterial, Centro,
+        SUM(CASE WHEN Semana = 0 THEN Cantidad ELSE 0 END) as NecesidadSemana0,
+        SUM(CASE WHEN Semana = 1 THEN Cantidad ELSE 0 END) as NecesidadSemana1,
+        SUM(CASE WHEN Semana = 2 THEN Cantidad ELSE 0 END) as NecesidadSemana2
     FROM MRP_BASE
     WHERE Semana IN (0, 1, 2)
-    GROUP BY IdMaterial
+    GROUP BY IdMaterial, Centro
 )
 SELECT
-    COALESCE(I.IdMaterial, M.IdMaterial, P.IdMaterial, PO.IdMaterial)  as IdMaterial,
-    COALESCE(I.Material, MM."Material")                                as Material,
-    COALESCE(U.UnidadMedida, MM."UnidadMedidaBase")                     as UnidadMedida,
-    COALESCE(I.InventarioLibreUtilizacion, 0)                           as InventarioLibreUtilizacion,
-    COALESCE(I.InventarioCalidad, 0)                                    as InventarioCalidad,
-    COALESCE(P.INVENTARIOPRODUCCION, 0)                                 as INVENTARIOPRODUCCION,
-    COALESCE(PO.EntregaPendienteNS0, 0) as "Entrega Pendiente NS0", PO.FechaEntregaProgramadaNS0 as "Fecha Entrega Programada NS0",
-    COALESCE(PO.EntregaPendienteNS1, 0) as "Entrega Pendiente NS1", PO.FechaEntregaProgramadaNS1 as "Fecha Entrega Programada NS1",
-    COALESCE(PO.EntregaPendienteNS2, 0) as "Entrega Pendiente NS2", PO.FechaEntregaProgramadaNS2 as "Fecha Entrega Programada NS2",
-    COALESCE(I.CPS1_Inv, 0) + COALESCE(P.CPS1_Prod, 0) as "CPS1 Inv", COALESCE(P.CPS1_Prod, 0) as "CPS1 Prod", COALESCE(M.CPS1_NS0, 0) as "CPS1 NS0", COALESCE(M.CPS1_NS1, 0) as "CPS1 NS1", COALESCE(M.CPS1_NS2, 0) as "CPS1 NS2",
-    COALESCE(I.CPS2_Inv, 0) + COALESCE(P.CPS2_Prod, 0) as "CPS2 Inv", COALESCE(P.CPS2_Prod, 0) as "CPS2 Prod", COALESCE(M.CPS2_NS0, 0) as "CPS2 NS0", COALESCE(M.CPS2_NS1, 0) as "CPS2 NS1", COALESCE(M.CPS2_NS2, 0) as "CPS2 NS2",
-    COALESCE(I.CPT2_Inv, 0) + COALESCE(P.CPT2_Prod, 0) as "CPT2 Inv", COALESCE(P.CPT2_Prod, 0) as "CPT2 Prod", COALESCE(M.CPT2_NS0, 0) as "CPT2 NS0", COALESCE(M.CPT2_NS1, 0) as "CPT2 NS1", COALESCE(M.CPT2_NS2, 0) as "CPT2 NS2",
-    COALESCE(I.CPB2_Inv, 0) + COALESCE(P.CPB2_Prod, 0) as "CPB2 Inv", COALESCE(P.CPB2_Prod, 0) as "CPB2 Prod", COALESCE(M.CPB2_NS0, 0) as "CPB2 NS0", COALESCE(M.CPB2_NS1, 0) as "CPB2 NS1", COALESCE(M.CPB2_NS2, 0) as "CPB2 NS2",
-    COALESCE(I.CPB1_Inv, 0) + COALESCE(P.CPB1_Prod, 0) as "CPB1 Inv", COALESCE(P.CPB1_Prod, 0) as "CPB1 Prod", COALESCE(M.CPB1_NS0, 0) as "CPB1 NS0", COALESCE(M.CPB1_NS1, 0) as "CPB1 NS1", COALESCE(M.CPB1_NS2, 0) as "CPB1 NS2",
-    COALESCE(I.CPS9_Inv, 0) + COALESCE(P.CPS9_Prod, 0) as "CPS9 Inv", COALESCE(P.CPS9_Prod, 0) as "CPS9 Prod", COALESCE(M.CPS9_NS0, 0) as "CPS9 NS0", COALESCE(M.CPS9_NS1, 0) as "CPS9 NS1", COALESCE(M.CPS9_NS2, 0) as "CPS9 NS2",
-    COALESCE(I.CPT9_Inv, 0) + COALESCE(P.CPT9_Prod, 0) as "CPT9 Inv", COALESCE(P.CPT9_Prod, 0) as "CPT9 Prod", COALESCE(M.CPT9_NS0, 0) as "CPT9 NS0", COALESCE(M.CPT9_NS1, 0) as "CPT9 NS1", COALESCE(M.CPT9_NS2, 0) as "CPT9 NS2",
-    COALESCE(I.CPB9_Inv, 0) + COALESCE(P.CPB9_Prod, 0) as "CPB9 Inv", COALESCE(P.CPB9_Prod, 0) as "CPB9 Prod", COALESCE(M.CPB9_NS0, 0) as "CPB9 NS0", COALESCE(M.CPB9_NS1, 0) as "CPB9 NS1", COALESCE(M.CPB9_NS2, 0) as "CPB9 NS2",
-    COALESCE(I.CPE9_Inv, 0) + COALESCE(P.CPE9_Prod, 0) as "CPE9 Inv", COALESCE(P.CPE9_Prod, 0) as "CPE9 Prod", COALESCE(M.CPE9_NS0, 0) as "CPE9 NS0", COALESCE(M.CPE9_NS1, 0) as "CPE9 NS1", COALESCE(M.CPE9_NS2, 0) as "CPE9 NS2",
-    COALESCE(I.CPK9_Inv, 0) + COALESCE(P.CPK9_Prod, 0) as "CPK9 Inv", COALESCE(P.CPK9_Prod, 0) as "CPK9 Prod", COALESCE(M.CPK9_NS0, 0) as "CPK9 NS0", COALESCE(M.CPK9_NS1, 0) as "CPK9 NS1", COALESCE(M.CPK9_NS2, 0) as "CPK9 NS2",
-    COALESCE(I.CPO9_Inv, 0) + COALESCE(P.CPO9_Prod, 0) as "CPO9 Inv", COALESCE(P.CPO9_Prod, 0) as "CPO9 Prod", COALESCE(M.CPO9_NS0, 0) as "CPO9 NS0", COALESCE(M.CPO9_NS1, 0) as "CPO9 NS1", COALESCE(M.CPO9_NS2, 0) as "CPO9 NS2"
-FROM INV_AGG I
-FULL OUTER JOIN MRP_AGG M
-    ON I.IdMaterial = M.IdMaterial
-FULL OUTER JOIN PROD_AGG P
-    ON COALESCE(I.IdMaterial, M.IdMaterial) = P.IdMaterial
-FULL OUTER JOIN PO_AGG PO
-    ON COALESCE(I.IdMaterial, M.IdMaterial, P.IdMaterial) = PO.IdMaterial
-LEFT JOIN UNIDAD_AGG U
-    ON COALESCE(I.IdMaterial, M.IdMaterial, P.IdMaterial, PO.IdMaterial) = U.IdMaterial
-LEFT JOIN DB_TABLEAUDATASOURCE.CADENASUMINISTRO.TDS_VW_CDS_MAESTRAMATERIALES MM
-    ON COALESCE(I.IdMaterial, M.IdMaterial, P.IdMaterial, PO.IdMaterial) = MM."IdMaterial"
-ORDER BY IdMaterial
+    MC.IdMaterial                                             as IdMaterial,
+    COALESCE(I.Material, MM."Material")                       as Material,
+    MC.Centro                                                 as IdCentro,
+    COALESCE(U.UnidadMedida, MM."UnidadMedidaBase")            as UnidadMedida,
+    COALESCE(I.InventarioLibreUtilizacion, 0)                  as InventarioLibreUtilizacion,
+    COALESCE(I.InventarioCalidad, 0)                           as InventarioCalidad,
+    COALESCE(I.InventarioBloqueado, 0)                         as CantidadBloqueado,
+    COALESCE(P.InventarioProduccion, 0)                        as InventarioProduccion,
+    COALESCE(PO.EntregaPendienteS0, 0)                         as "Entrega Pendiente S0",
+    PO.FechaEntregaProgramadaS0                                as "Fecha Entrega Programada S0",
+    COALESCE(PO.EntregaPendienteS1, 0)                         as "Entrega Pendiente S1",
+    PO.FechaEntregaProgramadaS1                                as "Fecha Entrega Programada S1",
+    COALESCE(PO.EntregaPendienteS2, 0)                         as "Entrega Pendiente S2",
+    PO.FechaEntregaProgramadaS2                                as "Fecha Entrega Programada S2",
+    COALESCE(R.NecesidadSemana0, 0)                            as NecesidadSemana0,
+    COALESCE(R.NecesidadSemana1, 0)                            as NecesidadSemana1,
+    COALESCE(R.NecesidadSemana2, 0)                            as NecesidadSemana2
+FROM MATERIAL_CENTRO MC
+LEFT JOIN INV_AGG I  ON MC.IdMaterial = I.IdMaterial  AND MC.Centro = I.Centro
+LEFT JOIN PROD_AGG P ON MC.IdMaterial = P.IdMaterial  AND MC.Centro = P.Centro
+LEFT JOIN MRP_AGG R  ON MC.IdMaterial = R.IdMaterial  AND MC.Centro = R.Centro
+LEFT JOIN PO_AGG PO  ON MC.IdMaterial = PO.IdMaterial AND MC.Centro = PO.Centro
+LEFT JOIN UNIDAD_AGG U ON MC.IdMaterial = U.IdMaterial
+LEFT JOIN DB_TABLEAUDATASOURCE.CADENASUMINISTRO.TDS_VW_CDS_MAESTRAMATERIALES MM ON MC.IdMaterial = MM."IdMaterial"
+WHERE COALESCE(I.InventarioLibreUtilizacion, 0) != 0
+   OR COALESCE(I.InventarioCalidad, 0) != 0
+   OR COALESCE(I.InventarioBloqueado, 0) != 0
+   OR COALESCE(P.InventarioProduccion, 0) != 0
+   OR COALESCE(PO.EntregaPendienteS0, 0) != 0
+   OR COALESCE(PO.EntregaPendienteS1, 0) != 0
+   OR COALESCE(PO.EntregaPendienteS2, 0) != 0
+   OR COALESCE(R.NecesidadSemana0, 0) != 0
+   OR COALESCE(R.NecesidadSemana1, 0) != 0
+   OR COALESCE(R.NecesidadSemana2, 0) != 0
+ORDER BY MC.IdMaterial, MC.Centro
 """
 
 

@@ -4,3 +4,4 @@ plotly
 snowflake-connector-python
 cryptography
 python-dotenv
+openpyxl

@@ -15,6 +15,7 @@ from components import (
 from data import cargar_inventario_necesidad
 from logic_inventario import (
     construir_filas_combinadas,
+    exportar_excel,
     CENTROS_MP,
     CENTROS_ME,
 )
@@ -187,4 +188,10 @@ st.markdown(
 if not filas_combinadas:
     st.info("No hay datos para los filtros seleccionados.")
 else:
+    st.download_button(
+        "📥 Generar Excel",
+        data=exportar_excel(filas_combinadas),
+        file_name="nivelacion_ventas_internas.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
     st.markdown(render_card(render_combinado_table(filas_combinadas)), unsafe_allow_html=True)

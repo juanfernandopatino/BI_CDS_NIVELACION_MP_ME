@@ -10,6 +10,8 @@ IDMATERIAL) y los alias entre comillas tal cual se escribieron, con
 espacios ("CPS1 Inv", "Entrega Pendiente NS0", ...).
 """
 
+from io import BytesIO
+
 import pandas as pd
 import streamlit as st
 
@@ -339,3 +341,29 @@ def construir_filas_combinadas(
     filas = [f for f in filas if f["IdMaterial"] in materiales_con_traslado]
 
     return filas
+
+
+def exportar_excel(filas: list[dict]) -> bytes:
+    """Arma un .xlsx en memoria con las mismas filas/columnas que muestra
+    render_combinado_table (una fila por sub-fila de traslado, sin fusionar
+    celdas), listo para descargar con st.download_button."""
+    columnas = {
+        "IdMaterial": "ID",
+        "Material": "Material",
+        "IdCentro": "IdCentro",
+        "UnidadMedida": "UM",
+        "Inventario": "Inventario",
+        "Necesidad": "Necesidad",
+        "EntregaPendiente": "Entrega Pendiente",
+        "FechaEntrega": "Fecha Entrega",
+        "CentroNivelar": "Centro a Nivelar",
+        "CantidadNivelar": "Cantidad a Nivelar",
+        "ClasificacionNivelar": "Clasificacion",
+        "Bloqueado": "Bloqueado",
+    }
+    df = pd.DataFrame(filas, columns=list(columnas.keys())).rename(columns=columnas)
+
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Nivelacion y Ventas Internas")
+    return buffer.getvalue()

@@ -249,4 +249,5 @@ ORDER BY MC.IdMaterial, MC.Centro
 def cargar_inventario_necesidad() -> pd.DataFrame:
     """Columnas tal como las nombra la consulta (alias sin comillas -> MAYUSCULA
     por defecto de Snowflake; alias entre comillas, ej. "CPS1 Inv", conservan su forma)."""
+    # Cache invalidation forced: 2026-10-08
     return _query(QUERY_INVENTARIO_NECESIDAD)

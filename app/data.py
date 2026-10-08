@@ -60,8 +60,7 @@ WITH INV_BASE AS (
         "UnidadMedidaBase"          as Unidad,
         "CantidadLibreUtilizacion"  as Libre,
         "CantidadControlCalidad"   as Calidad,
-        "CantidadBloqueado"        as Bloqueado,
-        "CantidadReservado"        as Reservado
+        "CantidadBloqueado"        as Bloqueado
     FROM DB_TABLEAUDATASOURCE.CADENASUMINISTRO.TDS_VW_CDS_INVENTARIOMATERIALMMDIAACTUAL
     WHERE (
             ("IdMaterial" LIKE '13%' AND "IdCentroFase2" IN ('CPS1','CPS2','CPT2','CPB2','CPB1'))
@@ -82,6 +81,18 @@ PROD_BASE AS (
          OR ("IdMaterial" LIKE '14%' AND "IdCentroFase2" IN ('CPS9','CPT9','CPB9','CPE9','CPK9','CPO9'))
           )
       AND "IdAlmacen" IN ('0003','0004','0005','0006','0017','0018','0038','0039')
+),
+RES_BASE AS (
+    -- Reservado global sin excepcion de almacenes
+    SELECT
+        "IdMaterial"                as IdMaterial,
+        "IdCentroFase2"             as Centro,
+        "CantidadReservado"         as Reservado
+    FROM DB_TABLEAUDATASOURCE.CADENASUMINISTRO.TDS_VW_CDS_INVENTARIOMATERIALMMDIAACTUAL
+    WHERE (
+            ("IdMaterial" LIKE '13%' AND "IdCentroFase2" IN ('CPS1','CPS2','CPT2','CPB2','CPB1'))
+         OR ("IdMaterial" LIKE '14%' AND "IdCentroFase2" IN ('CPS9','CPT9','CPB9','CPE9','CPK9','CPO9'))
+          )
 ),
 MRP_BASE AS (
     SELECT
@@ -143,6 +154,7 @@ UNIDAD_AGG AS (
 MATERIALES_ALL AS (
     SELECT DISTINCT IdMaterial FROM INV_BASE
     UNION SELECT DISTINCT IdMaterial FROM PROD_BASE
+    UNION SELECT DISTINCT IdMaterial FROM RES_BASE
     UNION SELECT DISTINCT IdMaterial FROM MRP_BASE
     UNION SELECT DISTINCT IdMaterial FROM PO_BASE
 ),
@@ -163,8 +175,7 @@ INV_AGG AS (
         MAX(Material)             as Material,
         SUM(Libre)                as InventarioLibreUtilizacion,
         SUM(Calidad)              as InventarioCalidad,
-        SUM(Bloqueado)            as InventarioBloqueado,
-        SUM(Reservado)            as InventarioReservado
+        SUM(Bloqueado)            as InventarioBloqueado
     FROM INV_BASE
     GROUP BY IdMaterial, Centro
 ),
@@ -173,6 +184,13 @@ PROD_AGG AS (
         IdMaterial, Centro,
         (SUM(Libre) + SUM(Calidad)) * 0.85 as InventarioProduccion
     FROM PROD_BASE
+    GROUP BY IdMaterial, Centro
+),
+RES_AGG AS (
+    SELECT
+        IdMaterial, Centro,
+        SUM(Reservado) as CantidadReservado
+    FROM RES_BASE
     GROUP BY IdMaterial, Centro
 ),
 MRP_AGG AS (
@@ -193,7 +211,7 @@ SELECT
     COALESCE(I.InventarioLibreUtilizacion, 0)                  as InventarioLibreUtilizacion,
     COALESCE(I.InventarioCalidad, 0)                           as InventarioCalidad,
     COALESCE(I.InventarioBloqueado, 0)                         as CantidadBloqueado,
-    COALESCE(I.InventarioReservado, 0)                         as CantidadReservado,
+    COALESCE(RES.CantidadReservado, 0)                         as CantidadReservado,
     COALESCE(P.InventarioProduccion, 0)                        as InventarioProduccion,
     COALESCE(PO.EntregaPendienteS0, 0)                         as "Entrega Pendiente S0",
     PO.FechaEntregaProgramadaS0                                as "Fecha Entrega Programada S0",
@@ -207,6 +225,7 @@ SELECT
 FROM MATERIAL_CENTRO MC
 LEFT JOIN INV_AGG I  ON MC.IdMaterial = I.IdMaterial  AND MC.Centro = I.Centro
 LEFT JOIN PROD_AGG P ON MC.IdMaterial = P.IdMaterial  AND MC.Centro = P.Centro
+LEFT JOIN RES_AGG RES ON MC.IdMaterial = RES.IdMaterial AND MC.Centro = RES.Centro
 LEFT JOIN MRP_AGG R  ON MC.IdMaterial = R.IdMaterial  AND MC.Centro = R.Centro
 LEFT JOIN PO_AGG PO  ON MC.IdMaterial = PO.IdMaterial AND MC.Centro = PO.Centro
 LEFT JOIN UNIDAD_AGG U ON MC.IdMaterial = U.IdMaterial
@@ -214,7 +233,7 @@ LEFT JOIN DB_TABLEAUDATASOURCE.CADENASUMINISTRO.TDS_VW_CDS_MAESTRAMATERIALES MM 
 WHERE COALESCE(I.InventarioLibreUtilizacion, 0) != 0
    OR COALESCE(I.InventarioCalidad, 0) != 0
    OR COALESCE(I.InventarioBloqueado, 0) != 0
-   OR COALESCE(I.InventarioReservado, 0) != 0
+   OR COALESCE(RES.CantidadReservado, 0) != 0
    OR COALESCE(P.InventarioProduccion, 0) != 0
    OR COALESCE(PO.EntregaPendienteS0, 0) != 0
    OR COALESCE(PO.EntregaPendienteS1, 0) != 0

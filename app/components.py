@@ -143,7 +143,7 @@ def _formato_fecha(valor) -> str:
 def _formato_numero(valor) -> str:
     valor_fmt = formato_valor(valor)
     if isinstance(valor_fmt, (int, float)):
-        return f"{valor_fmt:,.0f}"
+        return f"{valor_fmt:,.0f}".replace(",", ".")
     return valor_fmt
 
 
@@ -231,12 +231,13 @@ def render_combinado_table(filas: list[dict]) -> str:
         Pendiente/Fecha Entrega vienen discriminadas por centro.
       - Centro a Nivelar/Cantidad a Nivelar/Clasificacion: una fila por
         cada traslado real; vacias si el IdCentro no tiene ninguno.
-    Si la fila trae "ResaltarEntrega"=True (modo Simulado, semana actual),
-    Entrega Pendiente y Fecha Entrega se muestran en negrilla.
+    Al final de cada material se agrega una fila de Subtotal con la suma
+    de Inventario/Necesidad/Entrega Pendiente de sus IdCentro (cada uno
+    contado una sola vez, sin duplicar por sub-filas de traslado).
     Construida con listas + "".join(...), nunca iterrows + concatenacion.
     """
     columnas = [
-        "ID", "Material", "UM", "IdCentro", "Inventario", "Necesidad",
+        "ID", "Material", "IdCentro", "UM", "Inventario", "Necesidad",
         "Entrega Pendiente", "Fecha Entrega", "Centro a Nivelar", "Cantidad a Nivelar", "Clasificacion", "Bloqueado",
     ]
     header_html = "".join(f"<th>{c}</th>" for c in columnas)
@@ -255,7 +256,6 @@ def render_combinado_table(filas: list[dict]) -> str:
         filas_material = materiales[id_mat]
         primera = filas_material[0]
         total_filas_material = len(filas_material)
-        borde_grupo = "border-bottom:2px solid #013066;"
 
         rowspan_idcentro_restante = 0
         for i, fila in enumerate(filas_material):
@@ -263,7 +263,6 @@ def render_combinado_table(filas: list[dict]) -> str:
             if i == 0:
                 celdas.append(f'<td rowspan="{total_filas_material}">{formato_valor(primera["IdMaterial"])}</td>')
                 celdas.append(f'<td rowspan="{total_filas_material}" style="text-align:left">{formato_valor(primera["Material"])}</td>')
-                celdas.append(f'<td rowspan="{total_filas_material}">{formato_valor(primera["UnidadMedida"])}</td>')
 
             inicio_centro = rowspan_idcentro_restante == 0
             if inicio_centro:
@@ -274,12 +273,12 @@ def render_combinado_table(filas: list[dict]) -> str:
                 ):
                     rowspan_idcentro_restante += 1
                 celdas.append(f'<td rowspan="{rowspan_idcentro_restante}">{formato_valor(fila["IdCentro"])}</td>')
+                if i == 0:
+                    celdas.append(f'<td rowspan="{total_filas_material}">{formato_valor(primera["UnidadMedida"])}</td>')
                 celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: right;'>{_formato_numero(fila['Inventario'])}</td>")
                 celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: right;'>{_formato_numero(fila['Necesidad'])}</td>")
-
-                estilo_resaltado = "font-weight:700;" if fila.get("ResaltarEntrega") else ""
-                celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: right;{estilo_resaltado}'>{_formato_numero(fila['EntregaPendiente'])}</td>")
-                celdas.append(f'<td rowspan="{rowspan_idcentro_restante}" style="text-align: center;{estilo_resaltado}">{_formato_fecha(fila["FechaEntrega"])}</td>')
+                celdas.append(f"<td rowspan=\"{rowspan_idcentro_restante}\" style='text-align: right;'>{_formato_numero(fila['EntregaPendiente'])}</td>")
+                celdas.append(f'<td rowspan="{rowspan_idcentro_restante}" style="text-align: center;">{_formato_fecha(fila["FechaEntrega"])}</td>')
             rowspan_centro_actual = rowspan_idcentro_restante
 
             centro_nivelar = formato_valor(fila.get("CentroNivelar"))
@@ -299,8 +298,28 @@ def render_combinado_table(filas: list[dict]) -> str:
 
             rowspan_idcentro_restante -= 1
 
-            estilo_borde = f' style="{borde_grupo}"' if i == total_filas_material - 1 else ""
-            partes.append(f"<tr{estilo_borde}>{''.join(celdas)}</tr>")
+            partes.append(f"<tr>{''.join(celdas)}</tr>")
+
+        centros_vistos: set[str] = set()
+        subtotal_inv = subtotal_nec = subtotal_entrega = 0
+        for fila in filas_material:
+            centro = fila["IdCentro"]
+            if centro in centros_vistos:
+                continue
+            centros_vistos.add(centro)
+            subtotal_inv += fila["Inventario"] or 0
+            subtotal_nec += fila["Necesidad"] or 0
+            subtotal_entrega += fila["EntregaPendiente"] or 0
+
+        partes.append(
+            '<tr style="font-weight:700;background:#EEF3FB;border-bottom:2px solid #013066;">'
+            '<td colspan="4">Subtotal</td>'
+            f"<td style='text-align:right;'>{_formato_numero(subtotal_inv)}</td>"
+            f"<td style='text-align:right;'>{_formato_numero(subtotal_nec)}</td>"
+            f"<td style='text-align:right;'>{_formato_numero(subtotal_entrega)}</td>"
+            '<td colspan="5"></td>'
+            "</tr>"
+        )
 
     body_html = "".join(partes)
 

@@ -125,7 +125,7 @@ with col_modo:
     )
 modo = "actual" if modo_label == "Actual" else "simulado"
 
-busqueda = st.text_input("🔍 Buscar Material (ID o Nombre)", key="busqueda")
+busqueda = st.text_input("🔍 Buscar Material (ID o Nombre, separa varios con coma)", key="busqueda")
 
 # --- Filtros de nivelacion/venta interna ---
 col_clasif, col_destino = st.columns(2)
@@ -167,10 +167,13 @@ filas_combinadas = construir_filas_combinadas(
 )
 
 if busqueda:
-    termino = busqueda.lower()
+    terminos = [t.strip().lower() for t in busqueda.split(",") if t.strip()]
     filas_combinadas = [
         f for f in filas_combinadas
-        if termino in str(f.get("IdMaterial", "")).lower() or termino in str(f.get("Material", "")).lower()
+        if any(
+            termino in str(f.get("IdMaterial", "")).lower() or termino in str(f.get("Material", "")).lower()
+            for termino in terminos
+        )
     ]
 
 total_nivelacion = sum(1 for f in filas_combinadas if f.get("ClasificacionNivelar") == "Nivelacion")

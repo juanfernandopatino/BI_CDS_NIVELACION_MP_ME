@@ -131,7 +131,7 @@ def simular_semanas(df_largo: pd.DataFrame, grupo: str, modo: str) -> dict:
             estado_centro[centro][0] = {
                 "inv_total": inv_libre_calidad + produccion,
                 "inv_libre_calidad": inv_libre_calidad,
-                "necesidad": (fila.get("NECESIDADSEMANA0", 0) or 0) if fila is not None else 0,
+                "necesidad": (fila.get("CANTIDADRESERVADO", 0) or 0) if fila is not None else 0,
             }
             estado_centro[centro][1] = {"necesidad": (fila.get("NECESIDADSEMANA1", 0) or 0) if fila is not None else 0}
             estado_centro[centro][2] = {"necesidad": (fila.get("NECESIDADSEMANA2", 0) or 0) if fila is not None else 0}

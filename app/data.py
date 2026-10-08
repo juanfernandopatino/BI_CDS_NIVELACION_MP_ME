@@ -60,7 +60,8 @@ WITH INV_BASE AS (
         "UnidadMedidaBase"          as Unidad,
         "CantidadLibreUtilizacion"  as Libre,
         "CantidadControlCalidad"   as Calidad,
-        "CantidadBloqueado"        as Bloqueado
+        "CantidadBloqueado"        as Bloqueado,
+        "CantidadReservado"        as Reservado
     FROM DB_TABLEAUDATASOURCE.CADENASUMINISTRO.TDS_VW_CDS_INVENTARIOMATERIALMMDIAACTUAL
     WHERE (
             ("IdMaterial" LIKE '13%' AND "IdCentroFase2" IN ('CPS1','CPS2','CPT2','CPB2','CPB1'))
@@ -162,7 +163,8 @@ INV_AGG AS (
         MAX(Material)             as Material,
         SUM(Libre)                as InventarioLibreUtilizacion,
         SUM(Calidad)              as InventarioCalidad,
-        SUM(Bloqueado)            as InventarioBloqueado
+        SUM(Bloqueado)            as InventarioBloqueado,
+        SUM(Reservado)            as InventarioReservado
     FROM INV_BASE
     GROUP BY IdMaterial, Centro
 ),
@@ -191,6 +193,7 @@ SELECT
     COALESCE(I.InventarioLibreUtilizacion, 0)                  as InventarioLibreUtilizacion,
     COALESCE(I.InventarioCalidad, 0)                           as InventarioCalidad,
     COALESCE(I.InventarioBloqueado, 0)                         as CantidadBloqueado,
+    COALESCE(I.InventarioReservado, 0)                         as CantidadReservado,
     COALESCE(P.InventarioProduccion, 0)                        as InventarioProduccion,
     COALESCE(PO.EntregaPendienteS0, 0)                         as "Entrega Pendiente S0",
     PO.FechaEntregaProgramadaS0                                as "Fecha Entrega Programada S0",
@@ -211,6 +214,7 @@ LEFT JOIN DB_TABLEAUDATASOURCE.CADENASUMINISTRO.TDS_VW_CDS_MAESTRAMATERIALES MM 
 WHERE COALESCE(I.InventarioLibreUtilizacion, 0) != 0
    OR COALESCE(I.InventarioCalidad, 0) != 0
    OR COALESCE(I.InventarioBloqueado, 0) != 0
+   OR COALESCE(I.InventarioReservado, 0) != 0
    OR COALESCE(P.InventarioProduccion, 0) != 0
    OR COALESCE(PO.EntregaPendienteS0, 0) != 0
    OR COALESCE(PO.EntregaPendienteS1, 0) != 0

@@ -125,7 +125,12 @@ with col_modo:
     )
 modo = "actual" if modo_label == "Actual" else "simulado"
 
-busqueda = st.text_input("🔍 Buscar Material (ID o Nombre, separa varios con coma)", key="busqueda")
+st.markdown("**🔍 Buscar Material (ID o Nombre)**")
+materiales_busqueda = st.multiselect(
+    "busqueda", options=[], default=[], accept_new_options=True,
+    placeholder="Escribe un ID o nombre y presiona Enter para agregarlo",
+    label_visibility="collapsed", key="busqueda_ms",
+)
 
 # --- Filtros de nivelacion/venta interna ---
 col_clasif, col_destino = st.columns(2)
@@ -166,8 +171,8 @@ filas_combinadas = construir_filas_combinadas(
     centro_destino_filtro=centro_destino_filtro, clasificacion_filtro=clasificacion_filtro,
 )
 
-if busqueda:
-    terminos = [t.strip().lower() for t in busqueda.split(",") if t.strip()]
+if materiales_busqueda:
+    terminos = [t.strip().lower() for t in materiales_busqueda if t.strip()]
     filas_combinadas = [
         f for f in filas_combinadas
         if any(

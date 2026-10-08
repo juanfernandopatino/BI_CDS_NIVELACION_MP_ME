@@ -21,7 +21,7 @@ from logic_inventario import (
     CENTROS_ME,
 )
 
-st.set_page_config(page_title="Nivelacion y Ventas Internas MP y ME", layout="wide")
+st.set_page_config(page_title="Nivelacion y Ventas Internas MP y ME", page_icon="📦", layout="wide")
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 
 # ---------- Header ----------

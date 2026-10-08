@@ -51,6 +51,8 @@ QUERY_INVENTARIO_NECESIDAD = """
 -- Semana 0 = semana actual (lunes a domingo), Semana 1 = siguiente semana, Semana 2 = la que sigue.
 -- Entrega Pendiente: ordenes de compra no entregadas totalmente (IndicadorEntregaFinal = FALSE), sumando
 -- todos los almacenes, discriminadas por el centro real (IdCentroFase2) de TDS_VW_CDS_ORDENCOMPRA.
+-- Excluye ordenes cuya RazonSocial sea una de las razones sociales internas del grupo (no son compras
+-- a terceros).
 -- Necesidad Semana 0 (actual) = CantidadReservado de TDS_VW_CDS_INVENTARIOMATERIALMMDIAACTUAL (no el MRP),
 -- SIN filtro de almacen (a diferencia del inventario normal, que si excluye los almacenes de excepcion).
 -- Necesidad Semana 1 y 2 siguen viniendo del MRP (EEO_RequerimientoMaterialMRP).
@@ -124,6 +126,13 @@ PO_BASE AS (
     FROM DB_TABLEAUDATASOURCE.CADENASUMINISTRO.TDS_VW_CDS_ORDENCOMPRA
     WHERE "IndicadorEntregaFinal" = FALSE
       AND "TipoMaterial" IN ('ZMPR','ZEMP')
+      AND "RazonSocial" NOT IN (
+            'C.I. SUPER S.A.S.',
+            'SUPER DE ALIMENTOS S.A.S',
+            'GOLOSINAS TRULULU S.A.',
+            'GOLOSINAS SUPER DE COSTA RICA',
+            'MUNDO SUPER GUATEMALA SOCIEDAD ANÓN'
+          )
       AND (
             ("IdMaterial" LIKE '13%' AND "IdCentroFase2" IN ('CPS1','CPS2','CPT2','CPB2','CPB1'))
          OR ("IdMaterial" LIKE '14%' AND "IdCentroFase2" IN ('CPS9','CPT9','CPB9','CPE9','CPK9','CPO9'))

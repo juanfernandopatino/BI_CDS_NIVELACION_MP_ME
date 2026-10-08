@@ -125,15 +125,15 @@ with col_modo:
     )
 modo = "actual" if modo_label == "Actual" else "simulado"
 
-st.markdown("**🔍 Buscar Material (ID o Nombre)**")
-materiales_busqueda = st.multiselect(
-    "busqueda", options=[], default=[], accept_new_options=True,
-    placeholder="Escribe un ID o nombre y presiona Enter para agregarlo",
-    label_visibility="collapsed", key="busqueda_ms",
-)
-
 # --- Filtros de nivelacion/venta interna ---
-col_clasif, col_destino = st.columns(2)
+col_busqueda, col_clasif, col_destino = st.columns(3)
+with col_busqueda:
+    st.markdown("**🔍 Buscar Material**")
+    materiales_busqueda = st.multiselect(
+        "busqueda", options=[], default=[], accept_new_options=True,
+        placeholder="ID o nombre, Enter para agregar",
+        label_visibility="collapsed", key="busqueda_ms",
+    )
 with col_clasif:
     st.markdown("**Clasificación**")
     clasificacion_label = st.radio(

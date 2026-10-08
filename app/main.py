@@ -2,6 +2,8 @@
 
 import base64
 import html as html_lib
+import io
+import pandas as pd
 from pathlib import Path
 
 import streamlit as st
@@ -187,4 +189,17 @@ st.markdown(
 if not filas_combinadas:
     st.info("No hay datos para los filtros seleccionados.")
 else:
+    df_descarga = pd.DataFrame(filas_combinadas)
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        df_descarga.to_excel(writer, index=False, sheet_name='Datos')
+    
+    st.download_button(
+        label="📥 Descargar Excel",
+        data=buffer.getvalue(),
+        file_name="datos_nivelacion.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="secondary",
+    )
+    
     st.markdown(render_card(render_combinado_table(filas_combinadas)), unsafe_allow_html=True)
